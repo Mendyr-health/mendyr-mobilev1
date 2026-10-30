@@ -1,214 +1,444 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { router } from 'expo-router';
-import { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Animated,
-  Dimensions,
-  FlatList,
+  Image,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
-  type ListRenderItemInfo,
-  type ViewToken,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors, space } from '@/constants/theme';
-
-/* ------------------------------------------------------------------ */
-/*  Content for each onboarding slide                                 */
-/* ------------------------------------------------------------------ */
-
-interface Slide {
-  id: string;
-  emoji: string;
-  title: string;
-  subtitle: string;
-  highlights: string[];
-  gradient: [string, string]; // top & bottom accent colours
-}
-
-const slides: Slide[] = [
-  {
-    id: 'welcome',
-    emoji: '🏥',
-    title: 'Healthcare,\nright at your doorstep',
-    subtitle:
-      'Mendyr connects you with verified nurses, caregivers & physiotherapists — so expert care comes home to you.',
-    highlights: ['Verified professionals', 'Background checked', 'Trusted by families'],
-    gradient: [colors.brand50, '#E0EDFF'],
-  },
-  {
-    id: 'services',
-    emoji: '💊',
-    title: 'Every service\nyou need',
-    subtitle:
-      'From post-surgery nursing to elder care, physiotherapy, baby care & lab sample collection — all in one app.',
-    highlights: ['Home nursing', 'Physiotherapy', 'Elder & baby care', 'Lab collection'],
-    gradient: ['#F0FFF4', '#DCFCE7'],
-  },
-  {
-    id: 'booking',
-    emoji: '📅',
-    title: 'Book in\nseconds',
-    subtitle:
-      'Pick a service, choose a time slot and get matched with the right professional near you — instantly.',
-    highlights: ['Instant matching', 'Flexible scheduling', 'Live tracking'],
-    gradient: ['#FFFBEB', '#FEF3C7'],
-  },
-  {
-    id: 'trust',
-    emoji: '🛡️',
-    title: 'Safe, transparent\n& affordable',
-    subtitle:
-      'Upfront pricing with no hidden fees. Every professional is ID-verified and trained to clinical standards.',
-    highlights: ['Upfront pricing', 'ID-verified staff', 'Rated by patients'],
-    gradient: ['#F5F3FF', '#EDE9FE'],
-  },
-];
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { router } from 'expo-router';
+import { colors, radii, space } from '@/constants/theme';
+import { Icon, ProfessionIcon } from '@/components/icons';
+import { Badge } from '@/components/ui';
 
 const STORAGE_KEY = 'mendyr.onboarding-complete';
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-
-/* ------------------------------------------------------------------ */
-/*  Component                                                          */
-/* ------------------------------------------------------------------ */
 
 export default function Onboarding() {
   const insets = useSafeAreaInsets();
-  const flatListRef = useRef<FlatList<Slide>>(null);
-  const scrollX = useRef(new Animated.Value(0)).current;
+  const { width: windowWidth } = useWindowDimensions();
+  // Constrain width to 480 on web/desktop, full width on phones
+  const contentWidth = Math.min(windowWidth, 480);
+
+  const scrollViewRef = useRef<ScrollView>(null);
   const [activeIndex, setActiveIndex] = useState(0);
 
-  /* Track the currently visible slide */
-  const onViewableItemsChanged = useRef(
-    ({ viewableItems }: { viewableItems: ViewToken[] }) => {
-      if (viewableItems.length > 0 && viewableItems[0].index != null) {
-        setActiveIndex(viewableItems[0].index);
-      }
-    },
-  ).current;
+  const TOTAL_SLIDES = 4;
 
-  const viewabilityConfig = useRef({ viewAreaCoveragePercentThreshold: 50 }).current;
-
-  /* Finish onboarding */
   const finish = useCallback(async () => {
-    await AsyncStorage.setItem(STORAGE_KEY, '1');
+    try {
+      await AsyncStorage.setItem(STORAGE_KEY, '1');
+    } catch {
+      // storage fallback
+    }
     router.replace('/login');
   }, []);
 
-  /* Next slide or finish */
+  const goToSlide = useCallback(
+    (index: number) => {
+      const clamped = Math.max(0, Math.min(index, TOTAL_SLIDES - 1));
+      setActiveIndex(clamped);
+      scrollViewRef.current?.scrollTo({
+        x: clamped * contentWidth,
+        animated: true,
+      });
+    },
+    [contentWidth],
+  );
+
   const handleNext = useCallback(() => {
-    if (activeIndex < slides.length - 1) {
-      flatListRef.current?.scrollToIndex({ index: activeIndex + 1, animated: true });
+    if (activeIndex < TOTAL_SLIDES - 1) {
+      goToSlide(activeIndex + 1);
     } else {
       finish();
     }
-  }, [activeIndex, finish]);
+  }, [activeIndex, finish, goToSlide]);
 
-  /* Render a single slide */
-  const renderSlide = useCallback(
-    ({ item, index }: ListRenderItemInfo<Slide>) => (
-      <View style={[slideStyles.container, { width: SCREEN_WIDTH }]}>
-        {/* Coloured card */}
-        <View style={[slideStyles.card, { backgroundColor: item.gradient[0] }]}>
-          <Text style={slideStyles.emoji}>{item.emoji}</Text>
-          <View
-            style={[slideStyles.accentBar, { backgroundColor: item.gradient[1] }]}
-          />
-        </View>
+  const handleBack = useCallback(() => {
+    if (activeIndex > 0) {
+      goToSlide(activeIndex - 1);
+    }
+  }, [activeIndex, goToSlide]);
 
-        {/* Text content */}
-        <View style={slideStyles.textBlock}>
-          <Text style={slideStyles.title}>{item.title}</Text>
-          <Text style={slideStyles.subtitle}>{item.subtitle}</Text>
+  // Sync index on manual scroll / swipe
+  const handleScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const offsetX = e.nativeEvent.contentOffset.x;
+    const newIndex = Math.round(offsetX / contentWidth);
+    if (newIndex >= 0 && newIndex < TOTAL_SLIDES && newIndex !== activeIndex) {
+      setActiveIndex(newIndex);
+    }
+  };
 
-          {/* Highlight pills */}
-          <View style={slideStyles.pills}>
-            {item.highlights.map((h) => (
-              <View key={h} style={slideStyles.pill}>
-                <Text style={slideStyles.pillText}>{h}</Text>
-              </View>
-            ))}
-          </View>
-        </View>
-      </View>
-    ),
-    [],
-  );
+  // Web keyboard navigation
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowRight' || e.key === 'Enter') {
+        handleNext();
+      } else if (e.key === 'ArrowLeft') {
+        handleBack();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleNext, handleBack]);
 
-  const isLast = activeIndex === slides.length - 1;
+  const isLast = activeIndex === TOTAL_SLIDES - 1;
 
   return (
-    <View style={[s.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-      {/* Skip button */}
-      {!isLast && (
-        <Pressable style={s.skipBtn} onPress={finish} hitSlop={12}>
-          <Text style={s.skipText}>Skip</Text>
-        </Pressable>
-      )}
+    <View
+      style={[
+        s.root,
+        {
+          paddingTop: Math.max(insets.top, 12),
+          paddingBottom: Math.max(insets.bottom, 16),
+        },
+      ]}
+    >
+      {/* Top Navigation Bar */}
+      <View style={s.topBar}>
+        <View style={s.brandLogoRow}>
+          <Image
+            source={require('@/assets/branding/mendyr.png')}
+            style={s.logoImg}
+            resizeMode="contain"
+          />
+          <Text style={s.brandTitle}>Mendyr</Text>
+        </View>
 
-      {/* Swipeable slides */}
-      <FlatList
-        ref={flatListRef}
-        data={slides}
-        keyExtractor={(item) => item.id}
-        renderItem={renderSlide}
+        {!isLast ? (
+          <Pressable
+            style={({ pressed }) => [s.skipBtn, pressed && s.pressed]}
+            onPress={finish}
+            hitSlop={14}
+            accessibilityRole="button"
+            accessibilityLabel="Skip onboarding"
+          >
+            <Text style={s.skipText}>Skip</Text>
+          </Pressable>
+        ) : (
+          <View style={s.skipPlaceholder} />
+        )}
+      </View>
+
+      {/* Main Slide Carousel */}
+      <ScrollView
+        ref={scrollViewRef}
         horizontal
         pagingEnabled
         showsHorizontalScrollIndicator={false}
         bounces={false}
-        onScroll={Animated.event(
-          [{ nativeEvent: { contentOffset: { x: scrollX } } }],
-          { useNativeDriver: false },
-        )}
-        onViewableItemsChanged={onViewableItemsChanged}
-        viewabilityConfig={viewabilityConfig}
-        scrollEventThrottle={16}
-        style={s.list}
-        contentContainerStyle={s.listContent}
-      />
+        scrollEventThrottle={32}
+        onMomentumScrollEnd={handleScroll}
+        style={s.carousel}
+        contentContainerStyle={s.carouselContent}
+      >
+        {/* SLIDE 1: Welcome & Doorstep Healthcare */}
+        <View style={[s.slide, { width: contentWidth }]}>
+          <View style={s.slideInner}>
+            <Badge tone="brand" icon="sparkles" style={s.badge}>
+              Home healthcare, on demand
+            </Badge>
 
-      {/* Bottom controls */}
+            <Text style={s.slideTitle}>
+              Nurses and caregivers,{'\n'}
+              <Text style={s.brandHighlight}>at your doorstep</Text>
+            </Text>
+
+            <Text style={s.slideSubtitle}>
+              Book a nurse, physiotherapist, elder-care attendant or lab technician for home visits in minutes. Pay after the visit.
+            </Text>
+
+            {/* Visual: Real Booking Preview Card */}
+            <View style={s.previewCard}>
+              <View style={s.cardHeaderRow}>
+                <View style={s.cardLeft}>
+                  <ProfessionIcon type="nurse" size={40} iconSize={20} />
+                  <View style={s.cardTextWrap}>
+                    <Text style={s.bookingTitle}>General nursing visit</Text>
+                    <Text style={s.bookingTime}>Today · 6:00 pm · Indiranagar</Text>
+                  </View>
+                </View>
+                <Badge tone="blue">Confirmed</Badge>
+              </View>
+
+              <View style={s.proInfoRow}>
+                <View style={s.avatarCircle}>
+                  <Text style={s.avatarInitial}>PS</Text>
+                </View>
+                <View style={s.proMeta}>
+                  <Text style={s.proName}>Priya Sharma</Text>
+                  <Text style={s.proExp}>Nurse · 6 yrs experience · ★ 4.9</Text>
+                </View>
+                <View style={s.callButton}>
+                  <Icon name="phone" size={15} color="#FFFFFF" />
+                </View>
+              </View>
+
+              <View style={s.earningSnippet}>
+                <View style={s.rupeeIconBox}>
+                  <Icon name="rupee" size={15} color={colors.success} />
+                </View>
+                <Text style={s.earningText}>Affordable clinical care at home</Text>
+                <Text style={s.checkMark}>✓</Text>
+              </View>
+            </View>
+
+            {/* Feature Pills */}
+            <View style={s.pillsRow}>
+              {['Book in 2 minutes', 'Pay after the visit', 'Verified staff'].map(
+                (text) => (
+                  <View key={text} style={s.pill}>
+                    <Icon name="check" size={13} color={colors.brand600} strokeWidth={2.5} />
+                    <Text style={s.pillText}>{text}</Text>
+                  </View>
+                ),
+              )}
+            </View>
+          </View>
+        </View>
+
+        {/* SLIDE 2: Services We Provide */}
+        <View style={[s.slide, { width: contentWidth }]}>
+          <View style={s.slideInner}>
+            <Badge tone="brand" icon="activity" style={s.badge}>
+              Comprehensive Services
+            </Badge>
+
+            <Text style={s.slideTitle}>
+              Care we bring{'\n'}
+              <Text style={s.brandHighlight}>right to your home</Text>
+            </Text>
+
+            <Text style={s.slideSubtitle}>
+              From post-surgery recovery to routine checkups and diagnostics — clinical care for every member of your family.
+            </Text>
+
+            {/* 6 Services Grid */}
+            <View style={s.servicesGrid}>
+              <View style={s.serviceItem}>
+                <ProfessionIcon type="nurse" size={36} iconSize={18} />
+                <View style={s.serviceTexts}>
+                  <Text style={s.serviceTitle}>Home Nursing</Text>
+                  <Text style={s.serviceDesc}>Wound care, IVs & injections</Text>
+                </View>
+              </View>
+
+              <View style={s.serviceItem}>
+                <ProfessionIcon type="physiotherapist" size={36} iconSize={18} />
+                <View style={s.serviceTexts}>
+                  <Text style={s.serviceTitle}>Physiotherapy</Text>
+                  <Text style={s.serviceDesc}>Rehab & pain management</Text>
+                </View>
+              </View>
+
+              <View style={s.serviceItem}>
+                <ProfessionIcon type="caretaker" size={36} iconSize={18} />
+                <View style={s.serviceTexts}>
+                  <Text style={s.serviceTitle}>Elder Care</Text>
+                  <Text style={s.serviceDesc}>Daily living & companionship</Text>
+                </View>
+              </View>
+
+              <View style={s.serviceItem}>
+                <ProfessionIcon type="baby_care_specialist" size={36} iconSize={18} />
+                <View style={s.serviceTexts}>
+                  <Text style={s.serviceTitle}>Mother & Baby</Text>
+                  <Text style={s.serviceDesc}>Postnatal & infant bathing</Text>
+                </View>
+              </View>
+
+              <View style={s.serviceItem}>
+                <ProfessionIcon type="lab_technician" size={36} iconSize={18} />
+                <View style={s.serviceTexts}>
+                  <Text style={s.serviceTitle}>Lab Sample Pick</Text>
+                  <Text style={s.serviceDesc}>Blood & diagnostic tests</Text>
+                </View>
+              </View>
+
+              <View style={s.serviceItem}>
+                <ProfessionIcon type="doctor" size={36} iconSize={18} />
+                <View style={s.serviceTexts}>
+                  <Text style={s.serviceTitle}>Doctor Visits</Text>
+                  <Text style={s.serviceDesc}>In-home clinical review</Text>
+                </View>
+              </View>
+            </View>
+
+            <View style={s.noticeStrip}>
+              <Icon name="shieldCheck" size={16} color={colors.brand600} />
+              <Text style={s.noticeStripText}>
+                Every service delivered by council-registered specialists.
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        {/* SLIDE 3: How It Works */}
+        <View style={[s.slide, { width: contentWidth }]}>
+          <View style={s.slideInner}>
+            <Badge tone="brand" icon="calendar" style={s.badge}>
+              How It Works
+            </Badge>
+
+            <Text style={s.slideTitle}>
+              Book care in{'\n'}
+              <Text style={s.brandHighlight}>3 simple steps</Text>
+            </Text>
+
+            <Text style={s.slideSubtitle}>
+              Experience home healthcare with zero friction, upfront transparency, and complete safety.
+            </Text>
+
+            {/* Steps List */}
+            <View style={s.stepsList}>
+              <View style={s.stepCard}>
+                <View style={s.stepNum}>
+                  <Text style={s.stepNumText}>1</Text>
+                </View>
+                <View style={s.stepContent}>
+                  <Text style={s.stepTitle}>Pick a service</Text>
+                  <Text style={s.stepDesc}>
+                    Choose from nursing, physio, elder care, baby care, or lab diagnostics.
+                  </Text>
+                </View>
+              </View>
+
+              <View style={s.stepCard}>
+                <View style={s.stepNum}>
+                  <Text style={s.stepNumText}>2</Text>
+                </View>
+                <View style={s.stepContent}>
+                  <Text style={s.stepTitle}>Choose time and address</Text>
+                  <Text style={s.stepDesc}>
+                    Schedule for today or any day in the next 14 days, for you or a loved one.
+                  </Text>
+                </View>
+              </View>
+
+              <View style={s.stepCard}>
+                <View style={s.stepNum}>
+                  <Text style={s.stepNumText}>3</Text>
+                </View>
+                <View style={s.stepContent}>
+                  <Text style={s.stepTitle}>Professional arrives</Text>
+                  <Text style={s.stepDesc}>
+                    Track their arrival, meet your verified caregiver, and pay securely after the visit.
+                  </Text>
+                </View>
+              </View>
+            </View>
+          </View>
+        </View>
+
+        {/* SLIDE 4: Safe & Trusted for Everyone */}
+        <View style={[s.slide, { width: contentWidth }]}>
+          <View style={s.slideInner}>
+            <Badge tone="green" icon="shieldCheck" style={s.badge}>
+              Safe, Verified & Trusted
+            </Badge>
+
+            <Text style={s.slideTitle}>
+              Built with trust,{'\n'}
+              <Text style={s.brandHighlight}>for everyone</Text>
+            </Text>
+
+            <Text style={s.slideSubtitle}>
+              Whether you need care for your family or want to grow your professional healthcare practice.
+            </Text>
+
+            {/* Two Ecosystem Cards */}
+            <View style={s.trustCard}>
+              <View style={s.trustCardHeader}>
+                <Icon name="heart" size={20} color={colors.brand600} />
+                <Text style={s.trustCardTitle}>For Patients & Families</Text>
+              </View>
+              <Text style={s.trustCardBody}>
+                • Background-checked & clinical council verified{'\n'}
+                • Upfront transparent pricing with no hidden charges{'\n'}
+                • Direct phone contact & live arrival updates
+              </Text>
+            </View>
+
+            <View style={[s.trustCard, s.trustCardPro]}>
+              <View style={s.trustCardHeader}>
+                <Icon name="rupee" size={20} color={colors.success} />
+                <Text style={s.trustCardTitle}>For Healthcare Professionals</Text>
+              </View>
+              <Text style={s.trustCardBody}>
+                • Keep 80% of every visit you complete{'\n'}
+                • Choose your own hours around hospital shifts{'\n'}
+                • Only accept visits near you (3 to 30 km radius)
+              </Text>
+            </View>
+          </View>
+        </View>
+      </ScrollView>
+
+      {/* Bottom Controls Bar */}
       <View style={s.footer}>
-        {/* Dots */}
-        <View style={s.dots}>
-          {slides.map((_, i) => {
-            const inputRange = [
-              (i - 1) * SCREEN_WIDTH,
-              i * SCREEN_WIDTH,
-              (i + 1) * SCREEN_WIDTH,
-            ];
-
-            const dotWidth = scrollX.interpolate({
-              inputRange,
-              outputRange: [8, 24, 8],
-              extrapolate: 'clamp',
-            });
-
-            const dotOpacity = scrollX.interpolate({
-              inputRange,
-              outputRange: [0.3, 1, 0.3],
-              extrapolate: 'clamp',
-            });
-
+        {/* Pagination Dots */}
+        <View style={s.dotsRow}>
+          {Array.from({ length: TOTAL_SLIDES }).map((_, i) => {
+            const isActive = i === activeIndex;
             return (
-              <Animated.View
+              <Pressable
                 key={i}
-                style={[s.dot, { width: dotWidth, opacity: dotOpacity }]}
-              />
+                onPress={() => goToSlide(i)}
+                style={({ pressed }) => [
+                  s.dotTouch,
+                  pressed && s.pressed,
+                ]}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel={`Go to slide ${i + 1}`}
+              >
+                <View style={[s.dot, isActive && s.dotActive]} />
+              </Pressable>
             );
           })}
         </View>
 
-        {/* Primary CTA button */}
-        <Pressable
-          style={({ pressed }) => [s.ctaBtn, pressed && s.ctaPressed]}
-          onPress={handleNext}
-        >
-          <Text style={s.ctaText}>{isLast ? 'Get started' : 'Next'}</Text>
-        </Pressable>
+        {/* Action Buttons: Back + Next/Get Started */}
+        <View style={s.actionRow}>
+          {activeIndex > 0 && (
+            <Pressable
+              style={({ pressed }) => [s.backBtn, pressed && s.pressed]}
+              onPress={handleBack}
+              accessibilityRole="button"
+              accessibilityLabel="Previous slide"
+            >
+              <Icon name="chevronLeft" size={20} color={colors.ink} />
+            </Pressable>
+          )}
+
+          <Pressable
+            style={({ pressed }) => [
+              s.nextBtn,
+              activeIndex > 0 && s.nextBtnExpanded,
+              pressed && s.pressed,
+            ]}
+            onPress={handleNext}
+            accessibilityRole="button"
+            accessibilityLabel={isLast ? 'Get started' : 'Next slide'}
+          >
+            <Text style={s.nextBtnText}>
+              {isLast ? 'Get started' : 'Next'}
+            </Text>
+            <Icon
+              name={isLast ? 'check' : 'arrowRight'}
+              size={18}
+              color="#FFFFFF"
+              strokeWidth={2.4}
+            />
+          </Pressable>
+        </View>
       </View>
     </View>
   );
@@ -221,113 +451,428 @@ export default function Onboarding() {
 const s = StyleSheet.create({
   root: {
     flex: 1,
+    width: '100%',
+    maxWidth: '100%',
     backgroundColor: colors.background,
+    overflow: 'hidden',
+    justifyContent: 'space-between',
   },
-  skipBtn: {
-    position: 'absolute',
-    top: Platform.OS === 'ios' ? 56 : 16,
-    right: space.lg,
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: space.lg,
+    paddingVertical: space.sm,
+    width: '100%',
     zIndex: 10,
   },
+  brandLogoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  logoImg: {
+    width: 32,
+    height: 32,
+  },
+  brandTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: colors.ink,
+    letterSpacing: -0.4,
+  },
+  skipBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radii.pill,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  skipPlaceholder: {
+    width: 50,
+  },
   skipText: {
-    fontSize: 15,
-    fontWeight: '600',
+    fontSize: 13,
+    fontWeight: '700',
     color: colors.muted,
   },
-  list: {
+  carousel: {
+    flex: 1,
+    width: '100%',
+  },
+  carouselContent: {
+    alignItems: 'center',
+  },
+  slide: {
+    flex: 1,
+    maxWidth: '100%',
+    justifyContent: 'center',
+    paddingHorizontal: space.lg,
+  },
+  slideInner: {
+    width: '100%',
+    gap: 12,
+    justifyContent: 'center',
+  },
+  badge: {
+    marginBottom: 2,
+  },
+  slideTitle: {
+    fontSize: 27,
+    lineHeight: 33,
+    fontWeight: '800',
+    color: colors.ink,
+    letterSpacing: -0.6,
+  },
+  brandHighlight: {
+    color: colors.brand600,
+  },
+  slideSubtitle: {
+    fontSize: 14,
+    lineHeight: 21,
+    color: colors.muted,
+    marginBottom: 4,
+  },
+  /* Booking Preview Card */
+  previewCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 14,
+    gap: 12,
+    ...Platform.select({
+      web: {
+        boxShadow: '0 4px 14px rgba(18, 98, 226, 0.08)',
+      },
+      default: {
+        shadowColor: colors.brand600,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.08,
+        shadowRadius: 10,
+        elevation: 2,
+      },
+    }),
+  },
+  cardHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  cardLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
     flex: 1,
   },
-  listContent: {
-    alignItems: 'center',
+  cardTextWrap: {
+    flex: 1,
   },
-  footer: {
-    paddingHorizontal: space.lg,
-    paddingBottom: space.lg,
-    gap: 24,
-    alignItems: 'center',
+  bookingTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.ink,
   },
-  dots: {
+  bookingTime: {
+    fontSize: 12,
+    color: colors.muted,
+    marginTop: 1,
+  },
+  proInfoRow: {
     flexDirection: 'row',
-    gap: 6,
+    alignItems: 'center',
+    backgroundColor: colors.background,
+    borderRadius: 14,
+    padding: 10,
+    gap: 10,
+  },
+  avatarCircle: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: colors.brand100,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  dot: {
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: colors.brand600,
+  avatarInitial: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: colors.brand700,
   },
-  ctaBtn: {
-    width: '100%',
-    minHeight: 52,
+  proMeta: {
+    flex: 1,
+  },
+  proName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  proExp: {
+    fontSize: 11,
+    color: colors.muted,
+  },
+  callButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: colors.brand600,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  earningSnippet: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.successBg,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    gap: 8,
+  },
+  rupeeIconBox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  earningText: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.success,
+  },
+  checkMark: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.success,
+  },
+  /* Pills */
+  pillsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 2,
+  },
+  pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: colors.brand50,
+    borderRadius: radii.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderWidth: 1,
+    borderColor: colors.brand100,
+  },
+  pillText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.brand700,
+  },
+  /* Services Grid */
+  servicesGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 2,
+  },
+  serviceItem: {
+    width: '48%',
+    flexGrow: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 10,
+  },
+  serviceTexts: {
+    flex: 1,
+  },
+  serviceTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  serviceDesc: {
+    fontSize: 10,
+    color: colors.muted,
+    marginTop: 1,
+  },
+  noticeStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: colors.brand50,
+    borderRadius: 12,
+    padding: 10,
+    marginTop: 4,
+  },
+  noticeStripText: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.brand700,
+  },
+  /* Steps List */
+  stepsList: {
+    gap: 10,
+    marginTop: 4,
+  },
+  stepCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 12,
+  },
+  stepNum: {
+    width: 28,
+    height: 28,
     borderRadius: 14,
     backgroundColor: colors.brand600,
     alignItems: 'center',
     justifyContent: 'center',
+    marginTop: 1,
   },
-  ctaPressed: {
-    opacity: 0.82,
-  },
-  ctaText: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: '#fff',
-  },
-});
-
-const slideStyles = StyleSheet.create({
-  container: {
-    flex: 1,
-    paddingHorizontal: space.lg,
-    justifyContent: 'center',
-    gap: 32,
-  },
-  card: {
-    borderRadius: 28,
-    height: 260,
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-  },
-  emoji: {
-    fontSize: 80,
-  },
-  accentBar: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: 6,
-  },
-  textBlock: {
-    gap: 12,
-  },
-  title: {
-    fontSize: 30,
-    lineHeight: 38,
+  stepNumText: {
+    fontSize: 13,
     fontWeight: '800',
-    color: colors.ink,
+    color: '#FFFFFF',
   },
-  subtitle: {
-    fontSize: 16,
-    lineHeight: 24,
+  stepContent: {
+    flex: 1,
+  },
+  stepTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.ink,
+    marginBottom: 2,
+  },
+  stepDesc: {
+    fontSize: 12,
+    lineHeight: 17,
     color: colors.muted,
   },
-  pills: {
+  /* Trust Cards */
+  trustCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 14,
+    gap: 6,
+  },
+  trustCardPro: {
+    borderColor: colors.successBorder,
+    backgroundColor: '#FAFCFA',
+  },
+  trustCardHeader: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
+    alignItems: 'center',
     gap: 8,
-    marginTop: 4,
   },
-  pill: {
-    backgroundColor: colors.brand50,
-    borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingVertical: 7,
+  trustCardTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.ink,
   },
-  pillText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: colors.brand700,
+  trustCardBody: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: colors.muted,
+  },
+  /* Footer Controls */
+  footer: {
+    paddingHorizontal: space.lg,
+    paddingTop: space.sm,
+    gap: 16,
+    width: '100%',
+  },
+  dotsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  dotTouch: {
+    padding: 4,
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#CBD5E1',
+  },
+  dotActive: {
+    width: 24,
+    backgroundColor: colors.brand600,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    width: '100%',
+  },
+  backBtn: {
+    width: 50,
+    height: 52,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  nextBtn: {
+    flex: 1,
+    height: 52,
+    borderRadius: 14,
+    backgroundColor: colors.brand600,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    ...Platform.select({
+      web: {
+        cursor: 'pointer',
+        boxShadow: '0 4px 14px rgba(18, 98, 226, 0.25)',
+      },
+      default: {
+        shadowColor: colors.brand600,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.25,
+        shadowRadius: 8,
+        elevation: 3,
+      },
+    }),
+  },
+  nextBtnExpanded: {
+    flex: 1,
+  },
+  nextBtnText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  pressed: {
+    opacity: 0.84,
+    transform: [{ scale: 0.985 }],
   },
 });
