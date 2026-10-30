@@ -49,6 +49,12 @@ npx eas-cli build --platform android --profile production
 
 Development/preview profiles generate APKs; production generates an AAB. Configure Android application ID, signing, and production API URL in EAS before release.
 
+## GitHub Actions APK build
+
+The workflow at `.github/workflows/android-apk.yml` starts an EAS `preview` build on every push to `main` or manually from the Actions tab. It creates an installable APK and the job output includes its Expo download URL.
+
+Before the first run, configure EAS once from a trusted local machine: set an Android package name in `app.json`, run `npx eas-cli init`, and make one successful Android EAS build so signing credentials and `extra.eas.projectId` are saved. Then create a GitHub Actions repository secret named `EXPO_TOKEN` containing an Expo access token with permission to build this project. The token is never committed.
+
 ## Verification
 
 `npm run typecheck` passes. `expo lint` created an ESLint config then encountered an Expo CLI module-resolution error although ESLint was installed; rerun after resolving the local Expo CLI/toolchain issue. No Android emulator, physical device, production backend, or EAS build was available, so those are not claimed as verified.
