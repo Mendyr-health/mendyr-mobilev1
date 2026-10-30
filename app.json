@@ -3,6 +3,9 @@
     "name": "Mendyr",
     "slug": "mendyr-mobile",
     "version": "1.0.0",
+    "cli": {
+      "appVersionSource": "remote"
+    },
     "orientation": "portrait",
     "icon": "./assets/branding/mendyr.png",
     "scheme": "mendyr",
