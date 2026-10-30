@@ -67,3 +67,4 @@ export async function getCurrentDeviceLocation(): Promise<LocationData> {
     return DEFAULT_LOCATION;
   }
 }
+

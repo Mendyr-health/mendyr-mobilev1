@@ -42,6 +42,10 @@ export async function saveTokens(value:Tokens|null){
   } catch { /* storage unavailable — the session still works until the app closes */ }
 }
 
+export const saveToken = (tokenValue: string | null) =>
+  saveTokens(tokenValue ? { access_token: tokenValue } : null);
+
+
 /** Swap the refresh token for a new access token. Concurrent 401s share one attempt. */
 function refreshSession():Promise<boolean>{
   if(!refreshToken) return Promise.resolve(false);

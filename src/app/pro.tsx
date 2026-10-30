@@ -18,7 +18,7 @@ import { api } from '@/lib/api';
 import { dateTime, inr, statusLabel } from '@/lib/format';
 import type { BookingRequest, ProBooking, ProfessionalProfile } from '@/lib/types';
 import { colors, radii, space } from '@/constants/theme';
-import { Icon } from '@/components/icons';
+import { Icon, ProfessionIcon } from '@/components/icons';
 import { Avatar, Badge, Button, Card, Notice, Title, Body } from '@/components/ui';
 
 type Tab = 'home' | 'requests' | 'bookings' | 'profile';
@@ -47,6 +47,7 @@ export default function Pro() {
 
   const [msg, setMsg] = useState('');
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
+  const [showReviewDetails, setShowReviewDetails] = useState(false);
 
   async function accept(id: string) {
     setAcceptingId(id);
@@ -93,11 +94,86 @@ export default function Pro() {
             contentContainerStyle={s.scrollContainer}
             showsVerticalScrollIndicator={false}
           >
-            {/* Status notice if not verified */}
-            {!isVerified && (
-              <Notice tone="warning">
-                Your credentials are being reviewed by the clinical operations team. You will be notified once approved.
-              </Notice>
+            {/* Status Card: Explaining "Under Review" clearly */}
+            {!isVerified ? (
+              <Card style={s.reviewCard}>
+                <View style={s.reviewHeaderRow}>
+                  <View style={s.reviewIconBox}>
+                    <Icon name="clock" size={20} color={colors.warning} />
+                  </View>
+                  <View style={s.reviewHeaderText}>
+                    <Text style={s.reviewTitle}>Credentials Under Clinical Review</Text>
+                    <Text style={s.reviewStatus}>Verification Pending</Text>
+                  </View>
+                </View>
+
+                <Text style={s.reviewExplanation}>
+                  Your council registration / license number and clinical credentials are being verified by Mendyr&apos;s Clinical Operations team.
+                </Text>
+
+                <Pressable
+                  onPress={() => setShowReviewDetails(!showReviewDetails)}
+                  style={s.reviewToggle}
+                >
+                  <Icon
+                    name={showReviewDetails ? 'x' : 'info'}
+                    size={14}
+                    color={colors.brand700}
+                  />
+                  <Text style={s.reviewToggleText}>
+                    {showReviewDetails
+                      ? 'Hide details'
+                      : 'Why is my profile under review?'}
+                  </Text>
+                </Pressable>
+
+                {showReviewDetails && (
+                  <View style={s.reviewDetailsBox}>
+                    <Text style={s.reviewDetailPoint}>
+                      • Mendyr strictly verifies all nurses, physiotherapists, and caretakers to protect patient safety.
+                    </Text>
+                    <Text style={s.reviewDetailPoint}>
+                      • Review usually takes 2–4 business hours.
+                    </Text>
+                    <Text style={s.reviewDetailPoint}>
+                      • Once approved, your status becomes &quot;Verified Pro&quot; and you can immediately accept home visits.
+                    </Text>
+                  </View>
+                )}
+              </Card>
+            ) : (
+              <Card style={s.verifiedCard}>
+                <View style={s.verifiedRow}>
+                  <Icon name="checkCircle" size={20} color={colors.success} />
+                  <View style={s.verifiedTexts}>
+                    <Text style={s.verifiedTitle}>You are a Verified Professional</Text>
+                    <Text style={s.verifiedDesc}>
+                      Your credentials are approved. You can accept visit requests near you.
+                    </Text>
+                  </View>
+                </View>
+              </Card>
+            )}
+
+            {/* Profession summary tile */}
+            {profile.data?.professional_type && (
+              <Card style={s.proSummaryCard}>
+                <View style={s.proSummaryRow}>
+                  <ProfessionIcon
+                    type={profile.data.professional_type}
+                    size={44}
+                    iconSize={22}
+                  />
+                  <View style={s.proSummaryTexts}>
+                    <Text style={s.proSummaryName}>
+                      {profile.data.professional_type.replace(/_/g, ' ').toUpperCase()}
+                    </Text>
+                    <Text style={s.proSummaryExp}>
+                      {profile.data.years_of_experience} years clinical experience
+                    </Text>
+                  </View>
+                </View>
+              </Card>
             )}
 
             {/* Earnings / Platform Share Banner */}
@@ -107,7 +183,7 @@ export default function Pro() {
               </Badge>
               <Text style={s.shareTitle}>Keep 80% of every home visit</Text>
               <Text style={s.shareSubtitle}>
-                You receive direct payouts after every completed visit. No subscription charges.
+                You receive direct payouts after every completed visit. No upfront listing fees.
               </Text>
             </View>
 
@@ -274,9 +350,7 @@ export default function Pro() {
 
                     <View style={s.requestMetaRow}>
                       <Icon name="pin" size={14} color={colors.muted} />
-                      <Text style={s.requestMetaText}>
-                        {item.address}
-                      </Text>
+                      <Text style={s.requestMetaText}>{item.address}</Text>
                     </View>
 
                     <View style={s.bookingFooter}>
@@ -303,7 +377,9 @@ export default function Pro() {
               <View style={s.profileDetails}>
                 <Text style={s.profileName}>{user?.full_name}</Text>
                 <Text style={s.profileSpecialty}>
-                  {profile.data?.professional_type?.replace(/_/g, ' ').toUpperCase() ?? 'NURSE'}
+                  {profile.data?.professional_type
+                    ?.replace(/_/g, ' ')
+                    .toUpperCase() ?? 'NURSE'}
                 </Text>
                 <Text style={s.profileExp}>
                   {profile.data?.years_of_experience ?? 0} years experience
@@ -312,6 +388,18 @@ export default function Pro() {
             </Card>
 
             <Card style={s.profileMetaCard}>
+              <View style={s.profileMetaRow}>
+                <Text style={s.metaKey}>Verification</Text>
+                <Badge tone={isVerified ? 'green' : 'amber'}>
+                  {isVerified ? 'Approved' : 'Under Review'}
+                </Badge>
+              </View>
+              <View style={s.profileMetaRow}>
+                <Text style={s.metaKey}>Profession</Text>
+                <Text style={s.metaValue}>
+                  {profile.data?.professional_type?.replace(/_/g, ' ') ?? 'Nurse'}
+                </Text>
+              </View>
               <View style={s.profileMetaRow}>
                 <Text style={s.metaKey}>Email</Text>
                 <Text style={s.metaValue}>{user?.email}</Text>
@@ -322,11 +410,13 @@ export default function Pro() {
               </View>
               <View style={s.profileMetaRow}>
                 <Text style={s.metaKey}>Travel Radius</Text>
-                <Text style={s.metaValue}>{profile.data?.service_radius_km ?? 15} km</Text>
+                <Text style={s.metaValue}>
+                  {profile.data?.service_radius_km ?? 10} km
+                </Text>
               </View>
               <View style={s.profileMetaRow}>
-                <Text style={s.metaKey}>Platform Commission</Text>
-                <Text style={s.metaValue}>20% (You keep 80%)</Text>
+                <Text style={s.metaKey}>Payout Share</Text>
+                <Text style={s.metaValue}>80% (Mendyr 20%)</Text>
               </View>
             </Card>
 
@@ -356,12 +446,7 @@ export default function Pro() {
             size={20}
             color={tab === 'home' ? colors.brand600 : colors.muted}
           />
-          <Text
-            style={[
-              s.tabLabel,
-              tab === 'home' && s.tabLabelActive,
-            ]}
-          >
+          <Text style={[s.tabLabel, tab === 'home' && s.tabLabelActive]}>
             Overview
           </Text>
         </Pressable>
@@ -376,12 +461,7 @@ export default function Pro() {
             size={20}
             color={tab === 'requests' ? colors.brand600 : colors.muted}
           />
-          <Text
-            style={[
-              s.tabLabel,
-              tab === 'requests' && s.tabLabelActive,
-            ]}
-          >
+          <Text style={[s.tabLabel, tab === 'requests' && s.tabLabelActive]}>
             Requests
           </Text>
         </Pressable>
@@ -396,12 +476,7 @@ export default function Pro() {
             size={20}
             color={tab === 'bookings' ? colors.brand600 : colors.muted}
           />
-          <Text
-            style={[
-              s.tabLabel,
-              tab === 'bookings' && s.tabLabelActive,
-            ]}
-          >
+          <Text style={[s.tabLabel, tab === 'bookings' && s.tabLabelActive]}>
             Visits
           </Text>
         </Pressable>
@@ -416,12 +491,7 @@ export default function Pro() {
             size={20}
             color={tab === 'profile' ? colors.brand600 : colors.muted}
           />
-          <Text
-            style={[
-              s.tabLabel,
-              tab === 'profile' && s.tabLabelActive,
-            ]}
-          >
+          <Text style={[s.tabLabel, tab === 'profile' && s.tabLabelActive]}>
             Profile
           </Text>
         </Pressable>
@@ -482,6 +552,115 @@ const s = StyleSheet.create({
   scrollContainer: {
     padding: space.md,
     gap: 16,
+  },
+  reviewCard: {
+    backgroundColor: colors.warningBg,
+    borderColor: colors.warningBorder,
+    borderWidth: 1,
+    padding: 14,
+    gap: 10,
+  },
+  reviewHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  reviewIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#FEF3C7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reviewHeaderText: {
+    flex: 1,
+  },
+  reviewTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  reviewStatus: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.warning,
+  },
+  reviewExplanation: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: colors.inkSecondary,
+  },
+  reviewToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  reviewToggleText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.brand700,
+  },
+  reviewDetailsBox: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 12,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: colors.warningBorder,
+  },
+  reviewDetailPoint: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: colors.muted,
+  },
+  verifiedCard: {
+    backgroundColor: colors.successBg,
+    borderColor: colors.successBorder,
+    padding: 14,
+  },
+  verifiedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  verifiedTexts: {
+    flex: 1,
+  },
+  verifiedTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.success,
+  },
+  verifiedDesc: {
+    fontSize: 12,
+    color: colors.inkSecondary,
+    marginTop: 2,
+  },
+  proSummaryCard: {
+    padding: 14,
+  },
+  proSummaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  proSummaryTexts: {
+    flex: 1,
+  },
+  proSummaryName: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  proSummaryExp: {
+    fontSize: 12,
+    color: colors.muted,
+    marginTop: 2,
   },
   shareBanner: {
     backgroundColor: '#FFFFFF',

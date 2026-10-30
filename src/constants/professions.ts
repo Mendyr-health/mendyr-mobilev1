@@ -71,3 +71,4 @@ export function registrationPlaceholder(type: ProfessionalType): string {
       return 'e.g. CERT-2024-89';
   }
 }
+

@@ -124,7 +124,7 @@ export default function Register() {
 
     try {
       // 1. Create User account
-      const u = await register({
+      await register({
         full_name: fullName.trim(),
         email: email.trim().toLowerCase(),
         phone_number: formattedPhone,
