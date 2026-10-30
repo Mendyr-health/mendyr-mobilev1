@@ -92,8 +92,8 @@ export default function Register() {
       setError('Please enter your email address.');
       return;
     }
-    if (!password || password.length < 6) {
-      setError('Password must be at least 6 characters.');
+    if (!password || password.length < 8) {
+      setError('Password must be at least 8 characters.');
       return;
     }
 
@@ -380,7 +380,7 @@ export default function Register() {
 
             <Field
               label="Password"
-              placeholder="At least 6 characters"
+              placeholder="At least 8 characters"
               value={password}
               onChangeText={(text) => {
                 setPassword(text);
