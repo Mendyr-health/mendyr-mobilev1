@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -16,7 +18,7 @@ import { router } from 'expo-router';
 import { useAuth } from '@/providers/auth';
 import { api } from '@/lib/api';
 import { addressLine, dateTime, inr, statusLabel } from '@/lib/format';
-import type { Address, BookingListItem, Service } from '@/lib/types';
+import type { Address, Booking, BookingListItem, Service } from '@/lib/types';
 import { colors, radii, space } from '@/constants/theme';
 import { Icon, ProfessionIcon } from '@/components/icons';
 import { Avatar, Badge, type BadgeTone, Button, Card, Notice, Title, Body } from '@/components/ui';
@@ -49,6 +51,7 @@ export default function Patient() {
   const bookings = useQuery({
     queryKey: ['bookings'],
     queryFn: () => api<BookingListItem[]>('/bookings?page_size=100'),
+    refetchInterval: 15000,
   });
 
   const addresses = useQuery({
@@ -60,6 +63,15 @@ export default function Patient() {
   const [when, setWhen] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+
+  // Patient opened booking detail
+  const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null);
+
+  const bookingDetail = useQuery({
+    queryKey: ['booking-detail', selectedBookingId],
+    queryFn: () => (selectedBookingId ? api<Booking>(`/bookings/${selectedBookingId}`) : null),
+    enabled: !!selectedBookingId,
+  });
 
   async function book() {
     if (!selectedService) {
@@ -103,6 +115,17 @@ export default function Patient() {
     }
   }
 
+  const handleCall = (phone: string) => {
+    if (!phone) {
+      Alert.alert('Phone unavailable', 'Caregiver contact number not available yet.');
+      return;
+    }
+    const clean = phone.replace(/[\s-]/g, '');
+    Linking.openURL(`tel:${clean}`).catch(() => {
+      Alert.alert('Dialer error', `Please call ${phone} manually.`);
+    });
+  };
+
   const activeBookings = (bookings.data ?? []).filter(
     (b) => !['completed', 'cancelled', 'failed'].includes(b.status),
   );
@@ -122,7 +145,10 @@ export default function Patient() {
         </View>
 
         <Pressable
-          onPress={() => setTab('book')}
+          onPress={() => {
+            setSelectedBookingId(null);
+            setTab('book');
+          }}
           style={({ pressed }) => [s.headerAction, pressed && s.pressed]}
         >
           <Icon name="plus" size={16} color="#FFFFFF" strokeWidth={2.4} />
@@ -132,7 +158,129 @@ export default function Patient() {
 
       {/* Main Tab Content */}
       <View style={s.content}>
-        {tab === 'home' && (
+        {/* BOOKING DETAIL VIEW */}
+        {selectedBookingId ? (
+          <ScrollView
+            contentContainerStyle={s.scrollContainer}
+            showsVerticalScrollIndicator={false}
+          >
+            <Pressable
+              onPress={() => setSelectedBookingId(null)}
+              style={({ pressed }) => [s.backBtn, pressed && s.pressed]}
+            >
+              <Icon name="chevronLeft" size={18} color={colors.ink} />
+              <Text style={s.backBtnText}>Back to all bookings</Text>
+            </Pressable>
+
+            {bookingDetail.isLoading ? (
+              <ActivityIndicator color={colors.brand600} style={s.loader} />
+            ) : bookingDetail.data ? (
+              <View style={s.detailStack}>
+                {/* Hero Card */}
+                <Card style={s.detailHeroCard}>
+                  <View style={s.detailHeroTop}>
+                    <View style={s.detailHeroText}>
+                      <Text style={s.detailServiceName}>
+                        {bookingDetail.data.service_name_snapshot}
+                      </Text>
+                      <Text style={s.detailCode}>
+                        Booking #{bookingDetail.data.booking_code}
+                      </Text>
+                    </View>
+                    <Badge
+                      tone={STATUS_TONES[bookingDetail.data.status] ?? 'blue'}
+                    >
+                      {statusLabel(bookingDetail.data.status)}
+                    </Badge>
+                  </View>
+
+                  <View style={s.detailPriceRow}>
+                    <Text style={s.detailPriceLabel}>Total visit amount</Text>
+                    <Text style={s.detailPriceValue}>
+                      {inr(bookingDetail.data.total_amount)}
+                    </Text>
+                  </View>
+                </Card>
+
+                {/* CAREGIVER CARD */}
+                {bookingDetail.data.professional ? (
+                  <Card style={s.proDetailCard}>
+                    <Text style={s.sectionCardTitle}>Assigned Healthcare Professional</Text>
+                    <View style={s.proInfoRow}>
+                      <Avatar
+                        name={bookingDetail.data.professional.full_name}
+                        size={48}
+                      />
+                      <View style={s.proMeta}>
+                        <Text style={s.proName}>
+                          {bookingDetail.data.professional.full_name}
+                        </Text>
+                        <Text style={s.proRole}>
+                          {bookingDetail.data.professional.professional_type?.replace(/_/g, ' ')} · {bookingDetail.data.professional.years_of_experience} yrs exp
+                        </Text>
+                        {bookingDetail.data.professional.average_rating ? (
+                          <Text style={s.proRating}>
+                            ★ {bookingDetail.data.professional.average_rating.toFixed(1)} rating
+                          </Text>
+                        ) : null}
+                      </View>
+
+                      {/* Call Caregiver Button */}
+                      <Pressable
+                        onPress={() =>
+                          handleCall(bookingDetail.data?.professional?.phone_number ?? '')
+                        }
+                        style={({ pressed }) => [s.callBtn, pressed && s.pressed]}
+                      >
+                        <Icon name="phone" size={16} color="#FFFFFF" strokeWidth={2.4} />
+                        <Text style={s.callBtnText}>Call</Text>
+                      </Pressable>
+                    </View>
+                  </Card>
+                ) : (
+                  <Card style={s.searchingProCard}>
+                    <Icon name="clock" size={24} color={colors.warning} />
+                    <View style={s.searchingProTexts}>
+                      <Text style={s.searchingProTitle}>Finding your caregiver…</Text>
+                      <Text style={s.searchingProDesc}>
+                        A verified professional near your area is reviewing this booking. We will notify you once accepted.
+                      </Text>
+                    </View>
+                  </Card>
+                )}
+
+                {/* VISIT ADDRESS & TIME */}
+                <Card style={s.addressDetailCard}>
+                  <Text style={s.sectionCardTitle}>Visit Details</Text>
+                  <View style={s.detailRow}>
+                    <Icon name="clock" size={16} color={colors.muted} />
+                    <Text style={s.detailRowText}>
+                      {dateTime(bookingDetail.data.scheduled_start_at)}
+                    </Text>
+                  </View>
+                  <View style={s.detailRow}>
+                    <Icon name="pin" size={16} color={colors.muted} />
+                    <Text style={s.detailRowText}>
+                      {bookingDetail.data.address_snapshot}
+                    </Text>
+                  </View>
+                </Card>
+
+                {/* CLINICAL SUMMARY NOTES (If completed) */}
+                {bookingDetail.data.visit_summary_notes && (
+                  <Card style={s.summaryNotesCard}>
+                    <Text style={s.sectionCardTitle}>Caregiver Visit Notes</Text>
+                    <Text style={s.summaryNotesText}>
+                      {bookingDetail.data.visit_summary_notes}
+                    </Text>
+                  </Card>
+                )}
+              </View>
+            ) : (
+              <Notice tone="error">Could not load booking details.</Notice>
+            )}
+          </ScrollView>
+        ) : tab === 'home' ? (
           <ScrollView
             contentContainerStyle={s.scrollContainer}
             showsVerticalScrollIndicator={false}
@@ -148,22 +296,34 @@ export default function Patient() {
                 </View>
 
                 {activeBookings.slice(0, 2).map((b) => (
-                  <Card key={b.id} style={s.bookingCard}>
-                    <View style={s.bookingCardTop}>
-                      <Text style={s.bookingServiceName}>
-                        {b.service_name_snapshot}
-                      </Text>
-                      <Badge tone={STATUS_TONES[b.status] ?? 'blue'}>
-                        {statusLabel(b.status)}
-                      </Badge>
-                    </View>
-                    <View style={s.bookingMetaRow}>
-                      <Icon name="clock" size={14} color={colors.muted} />
-                      <Text style={s.bookingMetaText}>
-                        {dateTime(b.scheduled_start_at)}
-                      </Text>
-                    </View>
-                  </Card>
+                  <Pressable
+                    key={b.id}
+                    onPress={() => {
+                      setSelectedBookingId(b.id);
+                      setTab('bookings');
+                    }}
+                    style={({ pressed }) => [s.bookingTouch, pressed && s.pressed]}
+                  >
+                    <Card style={s.bookingCard}>
+                      <View style={s.bookingCardTop}>
+                        <Text style={s.bookingServiceName}>
+                          {b.service_name_snapshot}
+                        </Text>
+                        <Badge tone={STATUS_TONES[b.status] ?? 'blue'}>
+                          {statusLabel(b.status)}
+                        </Badge>
+                      </View>
+                      <View style={s.bookingMetaRow}>
+                        <Icon name="clock" size={14} color={colors.muted} />
+                        <Text style={s.bookingMetaText}>
+                          {dateTime(b.scheduled_start_at)}
+                        </Text>
+                      </View>
+                      <View style={s.bookingFooterRow}>
+                        <Text style={s.tapToViewText}>Tap to view details & caregiver →</Text>
+                      </View>
+                    </Card>
+                  </Pressable>
                 ))}
               </View>
             )}
@@ -221,9 +381,7 @@ export default function Patient() {
               </View>
             </View>
           </ScrollView>
-        )}
-
-        {tab === 'book' && (
+        ) : tab === 'book' ? (
           <ScrollView
             contentContainerStyle={s.scrollContainer}
             showsVerticalScrollIndicator={false}
@@ -329,11 +487,13 @@ export default function Patient() {
               style={s.confirmBtn}
             />
           </ScrollView>
-        )}
-
-        {tab === 'bookings' && (
+        ) : tab === 'bookings' ? (
           <View style={s.tabWrapper}>
-            <Title style={s.screenHeading}>Your bookings</Title>
+            <View style={s.screenHeadingWrap}>
+              <Title>Your bookings</Title>
+              <Body muted>Tap on any booking to view caregiver contact and details.</Body>
+            </View>
+
             {bookings.isLoading ? (
               <ActivityIndicator color={colors.brand600} style={s.loader} />
             ) : (
@@ -347,46 +507,53 @@ export default function Patient() {
                   </Notice>
                 }
                 renderItem={({ item }) => (
-                  <Card style={s.bookingItemCard}>
-                    <View style={s.bookingCardTop}>
-                      <Text style={s.bookingServiceName}>
-                        {item.service_name_snapshot}
-                      </Text>
-                      <Badge tone={STATUS_TONES[item.status] ?? 'gray'}>
-                        {statusLabel(item.status)}
-                      </Badge>
-                    </View>
+                  <Pressable
+                    onPress={() => setSelectedBookingId(item.id)}
+                    style={({ pressed }) => [s.bookingTouch, pressed && s.pressed]}
+                  >
+                    <Card style={s.bookingItemCard}>
+                      <View style={s.bookingCardTop}>
+                        <Text style={s.bookingServiceName}>
+                          {item.service_name_snapshot}
+                        </Text>
+                        <Badge tone={STATUS_TONES[item.status] ?? 'gray'}>
+                          {statusLabel(item.status)}
+                        </Badge>
+                      </View>
 
-                    <View style={s.bookingMetaRow}>
-                      <Icon name="clock" size={14} color={colors.muted} />
-                      <Text style={s.bookingMetaText}>
-                        {dateTime(item.scheduled_start_at)}
-                      </Text>
-                    </View>
+                      <View style={s.bookingMetaRow}>
+                        <Icon name="clock" size={14} color={colors.muted} />
+                        <Text style={s.bookingMetaText}>
+                          {dateTime(item.scheduled_start_at)}
+                        </Text>
+                      </View>
 
-                    <View style={s.bookingFooterRow}>
-                      <Text style={s.bookingPrice}>
-                        {inr(item.total_amount)}
-                      </Text>
-                      {item.professional_name ? (
-                        <View style={s.proAssignedChip}>
-                          <Icon name="user" size={13} color={colors.brand700} />
-                          <Text style={s.proAssignedText}>
-                            {item.professional_name}
-                          </Text>
-                        </View>
-                      ) : (
-                        <Text style={s.findingProText}>Matching caregiver…</Text>
-                      )}
-                    </View>
-                  </Card>
+                      <View style={s.bookingFooterRow}>
+                        <Text style={s.bookingPrice}>
+                          {inr(item.total_amount)}
+                        </Text>
+                        {item.professional_name ? (
+                          <View style={s.proAssignedChip}>
+                            <Icon name="user" size={13} color={colors.brand700} />
+                            <Text style={s.proAssignedText}>
+                              {item.professional_name}
+                            </Text>
+                          </View>
+                        ) : (
+                          <Text style={s.findingProText}>Matching caregiver…</Text>
+                        )}
+                      </View>
+
+                      <View style={s.viewDetailsHintRow}>
+                        <Text style={s.viewDetailsHintText}>Tap to view details & contact →</Text>
+                      </View>
+                    </Card>
+                  </Pressable>
                 )}
               />
             )}
           </View>
-        )}
-
-        {tab === 'account' && (
+        ) : (
           <ScrollView
             contentContainerStyle={s.scrollContainer}
             showsVerticalScrollIndicator={false}
@@ -441,19 +608,22 @@ export default function Patient() {
       {/* Bottom Tabs */}
       <View style={s.bottomTabBar}>
         <Pressable
-          onPress={() => setTab('home')}
+          onPress={() => {
+            setSelectedBookingId(null);
+            setTab('home');
+          }}
           style={s.tabButton}
           accessibilityRole="button"
         >
           <Icon
             name="heart"
             size={20}
-            color={tab === 'home' ? colors.brand600 : colors.muted}
+            color={tab === 'home' && !selectedBookingId ? colors.brand600 : colors.muted}
           />
           <Text
             style={[
               s.tabLabel,
-              tab === 'home' && s.tabLabelActive,
+              tab === 'home' && !selectedBookingId && s.tabLabelActive,
             ]}
           >
             Home
@@ -461,19 +631,22 @@ export default function Patient() {
         </Pressable>
 
         <Pressable
-          onPress={() => setTab('book')}
+          onPress={() => {
+            setSelectedBookingId(null);
+            setTab('book');
+          }}
           style={s.tabButton}
           accessibilityRole="button"
         >
           <Icon
             name="calendar"
             size={20}
-            color={tab === 'book' ? colors.brand600 : colors.muted}
+            color={tab === 'book' && !selectedBookingId ? colors.brand600 : colors.muted}
           />
           <Text
             style={[
               s.tabLabel,
-              tab === 'book' && s.tabLabelActive,
+              tab === 'book' && !selectedBookingId && s.tabLabelActive,
             ]}
           >
             Book
@@ -481,19 +654,21 @@ export default function Patient() {
         </Pressable>
 
         <Pressable
-          onPress={() => setTab('bookings')}
+          onPress={() => {
+            setTab('bookings');
+          }}
           style={s.tabButton}
           accessibilityRole="button"
         >
           <Icon
             name="list"
             size={20}
-            color={tab === 'bookings' ? colors.brand600 : colors.muted}
+            color={tab === 'bookings' || selectedBookingId ? colors.brand600 : colors.muted}
           />
           <Text
             style={[
               s.tabLabel,
-              tab === 'bookings' && s.tabLabelActive,
+              (tab === 'bookings' || selectedBookingId) && s.tabLabelActive,
             ]}
           >
             Visits
@@ -501,19 +676,22 @@ export default function Patient() {
         </Pressable>
 
         <Pressable
-          onPress={() => setTab('account')}
+          onPress={() => {
+            setSelectedBookingId(null);
+            setTab('account');
+          }}
           style={s.tabButton}
           accessibilityRole="button"
         >
           <Icon
             name="user"
             size={20}
-            color={tab === 'account' ? colors.brand600 : colors.muted}
+            color={tab === 'account' && !selectedBookingId ? colors.brand600 : colors.muted}
           />
           <Text
             style={[
               s.tabLabel,
-              tab === 'account' && s.tabLabelActive,
+              tab === 'account' && !selectedBookingId && s.tabLabelActive,
             ]}
           >
             Account
@@ -579,11 +757,11 @@ const s = StyleSheet.create({
   },
   tabWrapper: {
     flex: 1,
-    paddingTop: 12,
   },
-  screenHeading: {
+  screenHeadingWrap: {
     paddingHorizontal: space.md,
-    marginBottom: 12,
+    paddingTop: 12,
+    gap: 4,
   },
   scrollContainer: {
     padding: space.md,
@@ -736,13 +914,20 @@ const s = StyleSheet.create({
   confirmBtn: {
     marginTop: 12,
   },
+  bookingTouch: {
+    width: '100%',
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
   bookingCard: {
     padding: 14,
     gap: 8,
   },
   bookingItemCard: {
     padding: 14,
-    gap: 10,
+    gap: 8,
+    borderWidth: 1.5,
   },
   bookingCardTop: {
     flexDirection: 'row',
@@ -796,6 +981,19 @@ const s = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: colors.warning,
+  },
+  viewDetailsHintRow: {
+    paddingTop: 4,
+  },
+  viewDetailsHintText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.brand600,
+  },
+  tapToViewText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.brand600,
   },
   profileCard: {
     flexDirection: 'row',
@@ -856,5 +1054,167 @@ const s = StyleSheet.create({
   },
   pressed: {
     opacity: 0.8,
+  },
+  /* Detail view styles */
+  backBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radii.sm,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  backBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  detailStack: {
+    gap: 14,
+  },
+  detailHeroCard: {
+    padding: 16,
+    gap: 12,
+  },
+  detailHeroTop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  detailHeroText: {
+    flex: 1,
+  },
+  detailServiceName: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  detailCode: {
+    fontSize: 12,
+    color: colors.muted,
+    marginTop: 2,
+  },
+  detailPriceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderColor: colors.borderLight,
+  },
+  detailPriceLabel: {
+    fontSize: 13,
+    color: colors.muted,
+  },
+  detailPriceValue: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  proDetailCard: {
+    padding: 16,
+    gap: 12,
+  },
+  sectionCardTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  proInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  proMeta: {
+    flex: 1,
+  },
+  proName: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  proRole: {
+    fontSize: 12,
+    color: colors.muted,
+    marginTop: 2,
+    textTransform: 'capitalize',
+  },
+  proRating: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#EAB308',
+    marginTop: 2,
+  },
+  callBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.success,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: radii.md,
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  callBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  searchingProCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 16,
+    backgroundColor: colors.warningBg,
+    borderColor: colors.warningBorder,
+  },
+  searchingProTexts: {
+    flex: 1,
+    gap: 2,
+  },
+  searchingProTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  searchingProDesc: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: colors.inkSecondary,
+  },
+  addressDetailCard: {
+    padding: 16,
+    gap: 10,
+  },
+  detailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  detailRowText: {
+    fontSize: 13,
+    color: colors.ink,
+    flex: 1,
+  },
+  summaryNotesCard: {
+    padding: 16,
+    gap: 8,
+    backgroundColor: colors.brand50,
+    borderColor: colors.brand200,
+  },
+  summaryNotesText: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: colors.inkSecondary,
   },
 });
