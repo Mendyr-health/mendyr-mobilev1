@@ -1,56 +1,54 @@
-# Welcome to your Expo app 👋
+# Mendyr Mobile
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Dedicated Expo/React Native Android client for Mendyr home healthcare. This is an independent Git repository; the Next.js web project remains untouched.
 
-## Get started
+## Web-app audit
 
-1. Install dependencies
+The audited web project is Next.js 16.4 / React 19 / TypeScript / Tailwind 4. It is a two-sided marketplace: patients book home nurses, physiotherapists, caretakers, doctors, lab technicians, and baby-care specialists; professionals configure service area, services and hours, then accept and complete nearby visits.
 
-   ```bash
-   npm install
-   ```
+Patient flow: service catalogue → address → India-time appointment → quote/nearby professionals → booking → status, cancellation and review. Patient account supports profile and address CRUD.
 
-2. Start the app
+Professional flow: register → onboarding (profession, area/radius, services, timings) → request feed → accept → call/directions → check-in → complete/release → earnings dashboard. Web polling is 15 seconds for patient updates/requests and 30 seconds for professional bookings.
 
-   ```bash
-   npx expo start
-   ```
+Audited API routes include `/auth/login`, `/auth/register`, `/auth/me`, `/auth/logout`, `/bookings`, `/bookings/quote`, `/bookings/{id}/cancel`, `/bookings/{id}/accept`, `/bookings/{id}/check-in`, `/bookings/{id}/check-out`, `/bookings/{id}/release`, `/reviews`, `/addresses`, `/services`, `/services/categories`, `/professionals/nearby`, `/professionals/onboard`, `/professionals/me`, and availability/services endpoints under `/professionals/me`.
 
-In the output, you'll find options to open the app in a
+The web client uses a Next `/api/v1` rewrite and httponly cookies. Login/register responses also contain tokens. This app stores only the access token in Expo SecureStore and sends `Authorization: Bearer …`. **Confirm backend bearer-token/CORS support before release**; no refresh-token behavior has been invented.
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+Brand tokens were extracted exactly: primary `#1262E2`, light `#63B0F2`, dark `#0F4ABF`, 50 `#EEF5FE`, background `#F7F9FC`. The original logo is reused at `assets/branding/mendyr.png`. The web loads Inter/Outfit via Next; no distributable font files were present, so native currently uses Android system type pending supplied/licensed fonts.
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+Web-only routing, HTML/Tailwind components, cookie proxy, browser location and desktop chrome were rebuilt as native concerns. No WebView is used.
 
-## Get a fresh project
+## Implemented
 
-When you're ready, run:
+- Native login, role registration, secure session restoration/logout.
+- Patient dashboard, service selection, booking submission, saved addresses, booking statuses.
+- Professional dashboard, request polling/acceptance, bookings, profile summary.
+- Centralized typed API client, TanStack Query, brand theme, original logo, touch-sized controls and loading/error/success states.
+
+The following audited workflows are not yet complete: native address editor/location, quote/nearby presentation, booking cancellation/review/details, professional onboarding, profile/services/availability editors, and visit check-in/out/release.
+
+## Run
 
 ```bash
-npm run reset-project
+cp .env.example .env
+npm install
+npm run android
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+For an Android emulator with a local backend, set `EXPO_PUBLIC_API_URL=http://10.0.2.2:8000`. For a physical device, use a reachable HTTPS/LAN backend. Restart Expo after changing `.env`.
 
-### Other setup steps
+Run `npm run typecheck`. Use `npm start` then press `a`, or scan the development-build/Expo Go QR code.
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+## Android builds
 
-## Learn more
+```bash
+npx eas-cli build --platform android --profile development
+npx eas-cli build --platform android --profile preview
+npx eas-cli build --platform android --profile production
+```
 
-To learn more about developing your project with Expo, look at the following resources:
+Development/preview profiles generate APKs; production generates an AAB. Configure Android application ID, signing, and production API URL in EAS before release.
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+## Verification
 
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+`npm run typecheck` passes. `expo lint` created an ESLint config then encountered an Expo CLI module-resolution error although ESLint was installed; rerun after resolving the local Expo CLI/toolchain issue. No Android emulator, physical device, production backend, or EAS build was available, so those are not claimed as verified.
