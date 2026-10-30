@@ -1,12 +1,15 @@
 import React, { useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -18,10 +21,12 @@ import { api } from '@/lib/api';
 import { dateTime, inr, statusLabel } from '@/lib/format';
 import type { BookingRequest, ProBooking, ProfessionalProfile } from '@/lib/types';
 import { colors, radii, space } from '@/constants/theme';
-import { Icon } from '@/components/icons';
+import { Icon, ProfessionIcon } from '@/components/icons';
 import { Avatar, Badge, Button, Card, Notice, Title, Body } from '@/components/ui';
+import { ProNotificationBanner } from '@/components/pro-notification-banner';
 
 type Tab = 'home' | 'requests' | 'bookings' | 'profile';
+type BookingFilter = 'all' | 'upcoming' | 'completed';
 
 export default function Pro() {
   const { user, logout } = useAuth();
@@ -36,18 +41,70 @@ export default function Pro() {
   const requests = useQuery({
     queryKey: ['requests'],
     queryFn: () => api<BookingRequest[]>('/bookings/professional/requests'),
-    refetchInterval: 15000,
+    refetchInterval: 12000,
   });
 
   const bookings = useQuery({
     queryKey: ['pro-bookings'],
     queryFn: () => api<ProBooking[]>('/bookings/professional/mine?page_size=100'),
-    refetchInterval: 30000,
+    refetchInterval: 25000,
   });
 
   const [msg, setMsg] = useState('');
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
+  const [showReviewDetails, setShowReviewDetails] = useState(false);
+  const [bookingFilter, setBookingFilter] = useState<BookingFilter>('all');
 
+  // Currently opened visit detail
+  const [selectedBooking, setSelectedBooking] = useState<ProBooking | null>(null);
+
+  // Visit action states
+  const [actionBusy, setActionBusy] = useState<'start' | 'complete' | 'release' | null>(null);
+  const [visitNotes, setVisitNotes] = useState('');
+  const [vitalsRecorded, setVitalsRecorded] = useState('');
+
+  const isVerified = profile.data?.verification_status === 'approved';
+
+  // Handle incoming notification banner click
+  const handleViewNotificationRequest = (request: BookingRequest) => {
+    setTab('requests');
+  };
+
+  // Dial patient phone
+  const handleCallPatient = (phone: string) => {
+    if (!phone) {
+      Alert.alert('Phone number unavailable', 'No phone number provided for this patient.');
+      return;
+    }
+    const cleanPhone = phone.replace(/[\s-]/g, '');
+    const url = `tel:${cleanPhone}`;
+    Linking.openURL(url).catch(() => {
+      Alert.alert('Unable to open dialer', `Please dial ${phone} manually.`);
+    });
+  };
+
+  // Open location in Google Maps / Navigation
+  const handleOpenGoogleMaps = (lat: number, lng: number, addressTitle?: string) => {
+    if (!lat || !lng) {
+      Alert.alert('Coordinates unavailable', 'No GPS location coordinates for this visit.');
+      return;
+    }
+    const label = encodeURIComponent(addressTitle || 'Patient Visit');
+    const url = Platform.select({
+      ios: `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`,
+      android: `geo:${lat},${lng}?q=${lat},${lng}(${label})`,
+      default: `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`,
+    });
+
+    Linking.openURL(url).catch(() => {
+      // Fallback directly to universal web maps
+      Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`).catch(() => {
+        Alert.alert('Unable to open Google Maps', 'Please check your internet connection.');
+      });
+    });
+  };
+
+  // Accept a new visit request
   async function accept(id: string) {
     setAcceptingId(id);
     setMsg('');
@@ -55,7 +112,16 @@ export default function Pro() {
       await api(`/bookings/${id}/accept`, { method: 'POST' });
       setMsg('Visit accepted! It is now in your active bookings list.');
       qc.invalidateQueries({ queryKey: ['requests'] });
-      qc.invalidateQueries({ queryKey: ['pro-bookings'] });
+      const updatedBookings = await qc.fetchQuery({
+        queryKey: ['pro-bookings'],
+        queryFn: () => api<ProBooking[]>('/bookings/professional/mine?page_size=100'),
+      });
+      // Find the newly accepted booking and open it immediately
+      const accepted = updatedBookings.find((b) => b.id === id);
+      if (accepted) {
+        setSelectedBooking(accepted);
+      }
+      setTab('bookings');
     } catch (e) {
       setMsg(e instanceof Error ? e.message : 'Unable to accept request.');
     } finally {
@@ -63,10 +129,98 @@ export default function Pro() {
     }
   }
 
-  const isVerified = profile.data?.verification_status === 'approved';
+  // Start the visit (Check-in)
+  async function handleStartVisit(bookingId: string) {
+    setActionBusy('start');
+    try {
+      const updated = await api<ProBooking>(`/bookings/${bookingId}/check-in`, {
+        method: 'POST',
+      });
+      setSelectedBooking(updated);
+      qc.invalidateQueries({ queryKey: ['pro-bookings'] });
+      Alert.alert('Visit Started', 'You have checked in at the patient’s home.');
+    } catch (e) {
+      Alert.alert('Could not start visit', e instanceof Error ? e.message : 'Failed to check-in.');
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  // Mark visit completed (Check-out)
+  async function handleCompleteVisit(bookingId: string) {
+    setActionBusy('complete');
+    try {
+      const updated = await api<ProBooking>(`/bookings/${bookingId}/check-out`, {
+        method: 'POST',
+        body: {
+          visit_summary_notes: visitNotes.trim() || null,
+          vitals_recorded: vitalsRecorded.trim() || null,
+        },
+      });
+      setSelectedBooking(updated);
+      qc.invalidateQueries({ queryKey: ['pro-bookings'] });
+      qc.invalidateQueries({ queryKey: ['pro'] });
+      Alert.alert(
+        'Visit Completed! 🎉',
+        `Visit marked as completed. Payout earned: ${inr(updated.earning_amount)}`,
+      );
+      setVisitNotes('');
+      setVitalsRecorded('');
+    } catch (e) {
+      Alert.alert('Could not complete visit', e instanceof Error ? e.message : 'Failed to complete.');
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  // Release booking (Can't make it)
+  async function handleReleaseVisit(bookingId: string) {
+    Alert.alert(
+      'Release Visit',
+      'Are you sure you cannot attend this visit? It will be re-assigned to another professional.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Release',
+          style: 'destructive',
+          onPress: async () => {
+            setActionBusy('release');
+            try {
+              await api(`/bookings/${bookingId}/release`, { method: 'POST' });
+              qc.invalidateQueries({ queryKey: ['pro-bookings'] });
+              setSelectedBooking(null);
+              Alert.alert('Booking Released', 'The visit has been handed back.');
+            } catch (e) {
+              Alert.alert('Error', e instanceof Error ? e.message : 'Could not release visit.');
+            } finally {
+              setActionBusy(null);
+            }
+          },
+        },
+      ],
+    );
+  }
+
+  // Filter bookings
+  const allBookings = bookings.data ?? [];
+  const filteredBookings = allBookings.filter((b) => {
+    if (bookingFilter === 'upcoming') {
+      return ['assigned', 'confirmed', 'en_route', 'in_progress'].includes(b.status);
+    }
+    if (bookingFilter === 'completed') {
+      return b.status === 'completed';
+    }
+    return true;
+  });
 
   return (
     <SafeAreaView style={s.root} edges={['top', 'bottom']}>
+      {/* Floating In-App Live Notification Banner for New Requests */}
+      <ProNotificationBanner
+        requests={requests.data}
+        onViewRequest={handleViewNotificationRequest}
+      />
+
       {/* Header bar */}
       <View style={s.header}>
         <View style={s.headerLeft}>
@@ -86,18 +240,325 @@ export default function Pro() {
         </Badge>
       </View>
 
-      {/* Main Tab Content */}
+      {/* Main Content Area */}
       <View style={s.content}>
-        {tab === 'home' && (
+        {/* DETAIL VIEW: When a specific booking is selected */}
+        {selectedBooking ? (
           <ScrollView
             contentContainerStyle={s.scrollContainer}
             showsVerticalScrollIndicator={false}
           >
-            {/* Status notice if not verified */}
-            {!isVerified && (
-              <Notice tone="warning">
-                Your credentials are being reviewed by the clinical operations team. You will be notified once approved.
-              </Notice>
+            {/* Top Back Nav Button */}
+            <Pressable
+              onPress={() => setSelectedBooking(null)}
+              style={({ pressed }) => [s.backToVisitsBtn, pressed && s.pressed]}
+            >
+              <Icon name="chevronLeft" size={18} color={colors.ink} />
+              <Text style={s.backToVisitsText}>Back to all visits</Text>
+            </Pressable>
+
+            {/* Visit Title Card */}
+            <View style={s.visitHeroCard}>
+              <View style={s.visitHeroTop}>
+                <View style={s.visitHeroLeft}>
+                  <Text style={s.visitHeroTitle}>
+                    {selectedBooking.service_name}
+                  </Text>
+                  <Text style={s.visitHeroCode}>
+                    Booking #{selectedBooking.booking_code}
+                  </Text>
+                </View>
+                <Badge
+                  tone={
+                    selectedBooking.status === 'completed'
+                      ? 'green'
+                      : selectedBooking.status === 'in_progress'
+                      ? 'violet'
+                      : selectedBooking.status === 'cancelled'
+                      ? 'red'
+                      : 'blue'
+                  }
+                >
+                  {statusLabel(selectedBooking.status)}
+                </Badge>
+              </View>
+
+              <View style={s.earningBox}>
+                <Icon name="rupee" size={16} color={colors.success} />
+                <Text style={s.earningBoxText}>
+                  Your payout: {inr(selectedBooking.earning_amount)}
+                </Text>
+              </View>
+            </View>
+
+            {/* PATIENT CONTACT CARD */}
+            <Card style={s.patientDetailCard}>
+              <View style={s.cardSectionHeader}>
+                <Icon name="user" size={18} color={colors.brand600} />
+                <Text style={s.cardSectionTitle}>Patient Information</Text>
+              </View>
+
+              <View style={s.patientInfoRow}>
+                <Avatar name={selectedBooking.patient_name || 'Patient'} size={48} />
+                <View style={s.patientMetaTexts}>
+                  <Text style={s.patientNameText}>
+                    {selectedBooking.patient_name}
+                  </Text>
+                  <Text style={s.patientPhoneText}>
+                    {selectedBooking.patient_phone}
+                  </Text>
+                </View>
+
+                {/* Call Button: Opens Dialer */}
+                <Pressable
+                  onPress={() => handleCallPatient(selectedBooking.patient_phone)}
+                  style={({ pressed }) => [s.callActionBtn, pressed && s.pressed]}
+                >
+                  <Icon name="phone" size={16} color="#FFFFFF" strokeWidth={2.4} />
+                  <Text style={s.callActionText}>Call</Text>
+                </Pressable>
+              </View>
+            </Card>
+
+            {/* LOCATION & GOOGLE MAPS NAVIGATION CARD */}
+            <Card style={s.locationDetailCard}>
+              <View style={s.cardSectionHeader}>
+                <Icon name="pin" size={18} color={colors.brand600} />
+                <Text style={s.cardSectionTitle}>Visit Address & Location</Text>
+              </View>
+
+              <Text style={s.addressText}>{selectedBooking.address}</Text>
+
+              {selectedBooking.landmark ? (
+                <Text style={s.landmarkText}>
+                  Landmark: {selectedBooking.landmark}
+                </Text>
+              ) : null}
+
+              {selectedBooking.instructions ? (
+                <View style={s.instructionsBox}>
+                  <Text style={s.instructionsText}>
+                    &quot;{selectedBooking.instructions}&quot;
+                  </Text>
+                </View>
+              ) : null}
+
+              {/* Google Maps Navigation Button */}
+              <Pressable
+                onPress={() =>
+                  handleOpenGoogleMaps(
+                    selectedBooking.latitude,
+                    selectedBooking.longitude,
+                    selectedBooking.patient_name,
+                  )
+                }
+                style={({ pressed }) => [s.mapsActionBtn, pressed && s.pressed]}
+              >
+                <Icon name="pin" size={18} color="#FFFFFF" />
+                <Text style={s.mapsActionText}>Open in Google Maps Navigation</Text>
+              </Pressable>
+            </Card>
+
+            {/* SCHEDULE TIME CARD */}
+            <Card style={s.timingCard}>
+              <View style={s.timingRow}>
+                <Icon name="clock" size={18} color={colors.muted} />
+                <View style={s.timingTexts}>
+                  <Text style={s.timingLabel}>Scheduled Appointment</Text>
+                  <Text style={s.timingValue}>
+                    {dateTime(selectedBooking.scheduled_start_at)}
+                  </Text>
+                </View>
+              </View>
+            </Card>
+
+            {/* PATIENT CLINICAL NOTES */}
+            {selectedBooking.patient_notes ? (
+              <Card style={s.notesCard}>
+                <Text style={s.notesTitle}>Patient Notes</Text>
+                <Text style={s.notesBody}>{selectedBooking.patient_notes}</Text>
+              </Card>
+            ) : null}
+
+            {/* VISIT WORKFLOW ACTIONS */}
+            {['assigned', 'confirmed', 'en_route'].includes(selectedBooking.status) && (
+              <Card style={s.actionsCard}>
+                <Text style={s.actionsTitle}>Visit Actions</Text>
+                <Text style={s.actionsSubtitle}>
+                  Tap &quot;Start visit&quot; when you reach the patient&apos;s home.
+                </Text>
+
+                <View style={s.actionButtonsRow}>
+                  <Button
+                    title="Start visit (Check-in)"
+                    onPress={() => handleStartVisit(selectedBooking.id)}
+                    loading={actionBusy === 'start'}
+                    icon="check"
+                    style={s.flexButton}
+                  />
+
+                  <Button
+                    title="Can't make it"
+                    variant="outline"
+                    onPress={() => handleReleaseVisit(selectedBooking.id)}
+                    loading={actionBusy === 'release'}
+                    style={s.releaseButton}
+                  />
+                </View>
+              </Card>
+            )}
+
+            {/* IN-PROGRESS FORM: Complete Visit */}
+            {selectedBooking.status === 'in_progress' && (
+              <Card style={s.completeVisitCard}>
+                <Text style={s.completeVisitTitle}>Complete Visit</Text>
+                <Text style={s.completeVisitSub}>
+                  Record clinical summary notes and patient vitals before finishing.
+                </Text>
+
+                <View style={s.formFields}>
+                  <View style={s.fieldGroup}>
+                    <Text style={s.fieldLabel}>Visit summary notes</Text>
+                    <TextInput
+                      style={s.notesInput}
+                      placeholder="e.g. Wound cleaned and dressed with sterile gauze. Patient comfortable."
+                      value={visitNotes}
+                      onChangeText={setVisitNotes}
+                      multiline
+                      numberOfLines={3}
+                    />
+                  </View>
+
+                  <View style={s.fieldGroup}>
+                    <Text style={s.fieldLabel}>Recorded vitals</Text>
+                    <TextInput
+                      style={s.vitalsInput}
+                      placeholder="e.g. BP 120/80, SpO2 98%, Pulse 74, Temp 98.4°F"
+                      value={vitalsRecorded}
+                      onChangeText={setVitalsRecorded}
+                    />
+                  </View>
+
+                  <Button
+                    title="Mark visit completed"
+                    onPress={() => handleCompleteVisit(selectedBooking.id)}
+                    loading={actionBusy === 'complete'}
+                    icon="check"
+                    size="lg"
+                  />
+                </View>
+              </Card>
+            )}
+
+            {/* COMPLETED CARD */}
+            {selectedBooking.status === 'completed' && (
+              <Card style={s.completedSummaryCard}>
+                <View style={s.completedTop}>
+                  <Icon name="checkCircle" size={20} color={colors.success} />
+                  <Text style={s.completedTitle}>Visit Successfully Completed</Text>
+                </View>
+                {selectedBooking.completed_at ? (
+                  <Text style={s.completedTime}>
+                    Finished on {dateTime(selectedBooking.completed_at)}
+                  </Text>
+                ) : null}
+                {selectedBooking.visit_summary_notes ? (
+                  <View style={s.recordedNotesBox}>
+                    <Text style={s.recordedNotesLabel}>Recorded notes:</Text>
+                    <Text style={s.recordedNotesText}>
+                      {selectedBooking.visit_summary_notes}
+                    </Text>
+                  </View>
+                ) : null}
+              </Card>
+            )}
+          </ScrollView>
+        ) : tab === 'home' ? (
+          /* OVERVIEW TAB */
+          <ScrollView
+            contentContainerStyle={s.scrollContainer}
+            showsVerticalScrollIndicator={false}
+          >
+            {/* Status Card: Explaining "Under Review" clearly */}
+            {!isVerified ? (
+              <Card style={s.reviewCard}>
+                <View style={s.reviewHeaderRow}>
+                  <View style={s.reviewIconBox}>
+                    <Icon name="clock" size={20} color={colors.warning} />
+                  </View>
+                  <View style={s.reviewHeaderText}>
+                    <Text style={s.reviewTitle}>Credentials Under Clinical Review</Text>
+                    <Text style={s.reviewStatus}>Verification Pending</Text>
+                  </View>
+                </View>
+
+                <Text style={s.reviewExplanation}>
+                  Your council registration / license number and clinical credentials are being verified by Mendyr&apos;s Clinical Operations team.
+                </Text>
+
+                <Pressable
+                  onPress={() => setShowReviewDetails(!showReviewDetails)}
+                  style={s.reviewToggle}
+                >
+                  <Icon
+                    name={showReviewDetails ? 'x' : 'info'}
+                    size={14}
+                    color={colors.brand700}
+                  />
+                  <Text style={s.reviewToggleText}>
+                    {showReviewDetails
+                      ? 'Hide details'
+                      : 'Why is my profile under review?'}
+                  </Text>
+                </Pressable>
+
+                {showReviewDetails && (
+                  <View style={s.reviewDetailsBox}>
+                    <Text style={s.reviewDetailPoint}>
+                      • Mendyr strictly verifies all nurses, physiotherapists, and caretakers to protect patient safety.
+                    </Text>
+                    <Text style={s.reviewDetailPoint}>
+                      • Review usually takes 2–4 business hours.
+                    </Text>
+                    <Text style={s.reviewDetailPoint}>
+                      • Once approved, your status becomes &quot;Verified Pro&quot; and you can immediately accept home visits.
+                    </Text>
+                  </View>
+                )}
+              </Card>
+            ) : (
+              <Card style={s.verifiedCard}>
+                <View style={s.verifiedRow}>
+                  <Icon name="checkCircle" size={20} color={colors.success} />
+                  <View style={s.verifiedTexts}>
+                    <Text style={s.verifiedTitle}>You are a Verified Professional</Text>
+                    <Text style={s.verifiedDesc}>
+                      Your credentials are approved. You can accept visit requests near you.
+                    </Text>
+                  </View>
+                </View>
+              </Card>
+            )}
+
+            {/* Profession summary tile */}
+            {profile.data?.professional_type && (
+              <Card style={s.proSummaryCard}>
+                <View style={s.proSummaryRow}>
+                  <ProfessionIcon
+                    type={profile.data.professional_type}
+                    size={44}
+                    iconSize={22}
+                  />
+                  <View style={s.proSummaryTexts}>
+                    <Text style={s.proSummaryName}>
+                      {profile.data.professional_type.replace(/_/g, ' ').toUpperCase()}
+                    </Text>
+                    <Text style={s.proSummaryExp}>
+                      {profile.data.years_of_experience} years clinical experience
+                    </Text>
+                  </View>
+                </View>
+              </Card>
             )}
 
             {/* Earnings / Platform Share Banner */}
@@ -107,7 +568,7 @@ export default function Pro() {
               </Badge>
               <Text style={s.shareTitle}>Keep 80% of every home visit</Text>
               <Text style={s.shareSubtitle}>
-                You receive direct payouts after every completed visit. No subscription charges.
+                You receive direct payouts after every completed visit. No upfront listing fees.
               </Text>
             </View>
 
@@ -155,9 +616,8 @@ export default function Pro() {
               size="lg"
             />
           </ScrollView>
-        )}
-
-        {tab === 'requests' && (
+        ) : tab === 'requests' ? (
+          /* REQUESTS TAB */
           <View style={s.tabWrapper}>
             <View style={s.screenHeadingWrap}>
               <Title>Requests near you</Title>
@@ -230,68 +690,112 @@ export default function Pro() {
               />
             )}
           </View>
-        )}
-
-        {tab === 'bookings' && (
+        ) : tab === 'bookings' ? (
+          /* YOUR VISITS TAB (Interactive List) */
           <View style={s.tabWrapper}>
             <View style={s.screenHeadingWrap}>
               <Title>Your visits</Title>
-              <Body muted>Assigned and completed home appointments.</Body>
+              <Body muted>Tap on any visit to see patient details, call, or open Google Maps.</Body>
+
+              {/* Filter Chips */}
+              <View style={s.filterChipsRow}>
+                {(['all', 'upcoming', 'completed'] as BookingFilter[]).map((f) => (
+                  <Pressable
+                    key={f}
+                    onPress={() => setBookingFilter(f)}
+                    style={[
+                      s.filterChip,
+                      bookingFilter === f && s.filterChipActive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        s.filterChipText,
+                        bookingFilter === f && s.filterChipTextActive,
+                      ]}
+                    >
+                      {f === 'all'
+                        ? `All (${allBookings.length})`
+                        : f === 'upcoming'
+                        ? 'Upcoming'
+                        : 'Completed'}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
             </View>
 
             {bookings.isLoading ? (
               <ActivityIndicator color={colors.brand600} style={s.loader} />
             ) : (
               <FlatList
-                data={bookings.data ?? []}
+                data={filteredBookings}
                 keyExtractor={(item) => item.id}
                 contentContainerStyle={s.scrollContainer}
                 ListEmptyComponent={
                   <Notice tone="info">
-                    You have no active or past bookings. Accept incoming requests from the Requests tab to start visits.
+                    You have no {bookingFilter !== 'all' ? bookingFilter : ''} visits yet. Accept open requests from the Requests tab to start taking visits.
                   </Notice>
                 }
                 renderItem={({ item }) => (
-                  <Card style={s.bookingCard}>
-                    <View style={s.requestTopRow}>
-                      <Text style={s.requestService}>{item.service_name}</Text>
-                      <Badge tone="blue">{statusLabel(item.status)}</Badge>
-                    </View>
+                  <Pressable
+                    onPress={() => setSelectedBooking(item)}
+                    style={({ pressed }) => [s.bookingRowTouch, pressed && s.pressed]}
+                  >
+                    <Card style={s.bookingCardInteractive}>
+                      <View style={s.requestTopRow}>
+                        <Text style={s.requestService}>{item.service_name}</Text>
+                        <Badge
+                          tone={
+                            item.status === 'completed'
+                              ? 'green'
+                              : item.status === 'in_progress'
+                              ? 'violet'
+                              : 'blue'
+                          }
+                        >
+                          {statusLabel(item.status)}
+                        </Badge>
+                      </View>
 
-                    <View style={s.requestMetaRow}>
-                      <Icon name="clock" size={14} color={colors.muted} />
-                      <Text style={s.requestMetaText}>
-                        {dateTime(item.scheduled_start_at)}
-                      </Text>
-                    </View>
+                      <View style={s.requestMetaRow}>
+                        <Icon name="clock" size={14} color={colors.muted} />
+                        <Text style={s.requestMetaText}>
+                          {dateTime(item.scheduled_start_at)}
+                        </Text>
+                      </View>
 
-                    <View style={s.requestMetaRow}>
-                      <Icon name="user" size={14} color={colors.muted} />
-                      <Text style={s.requestMetaText}>
-                        Patient: {item.patient_name} · {item.patient_phone}
-                      </Text>
-                    </View>
+                      <View style={s.requestMetaRow}>
+                        <Icon name="user" size={14} color={colors.brand600} />
+                        <Text style={s.bookingPatientName}>
+                          {item.patient_name}
+                        </Text>
+                      </View>
 
-                    <View style={s.requestMetaRow}>
-                      <Icon name="pin" size={14} color={colors.muted} />
-                      <Text style={s.requestMetaText}>
-                        {item.address}
-                      </Text>
-                    </View>
+                      <View style={s.requestMetaRow}>
+                        <Icon name="pin" size={14} color={colors.muted} />
+                        <Text style={s.requestMetaText} numberOfLines={1}>
+                          {item.address}
+                        </Text>
+                      </View>
 
-                    <View style={s.bookingFooter}>
-                      <Text style={s.bookingEarningText}>
-                        Your payout: {inr(item.earning_amount)}
-                      </Text>
-                    </View>
-                  </Card>
+                      <View style={s.bookingFooterInteractive}>
+                        <Text style={s.bookingEarningText}>
+                          Payout: {inr(item.earning_amount)}
+                        </Text>
+                        <View style={s.viewDetailsHint}>
+                          <Text style={s.viewDetailsText}>Open details</Text>
+                          <Icon name="chevronRight" size={14} color={colors.brand600} />
+                        </View>
+                      </View>
+                    </Card>
+                  </Pressable>
                 )}
               />
             )}
           </View>
-        )}
-
-        {tab === 'profile' && (
+        ) : (
+          /* PROFILE TAB */
           <ScrollView
             contentContainerStyle={s.scrollContainer}
             showsVerticalScrollIndicator={false}
@@ -303,7 +807,9 @@ export default function Pro() {
               <View style={s.profileDetails}>
                 <Text style={s.profileName}>{user?.full_name}</Text>
                 <Text style={s.profileSpecialty}>
-                  {profile.data?.professional_type?.replace(/_/g, ' ').toUpperCase() ?? 'NURSE'}
+                  {profile.data?.professional_type
+                    ?.replace(/_/g, ' ')
+                    .toUpperCase() ?? 'NURSE'}
                 </Text>
                 <Text style={s.profileExp}>
                   {profile.data?.years_of_experience ?? 0} years experience
@@ -312,6 +818,18 @@ export default function Pro() {
             </Card>
 
             <Card style={s.profileMetaCard}>
+              <View style={s.profileMetaRow}>
+                <Text style={s.metaKey}>Verification</Text>
+                <Badge tone={isVerified ? 'green' : 'amber'}>
+                  {isVerified ? 'Approved' : 'Under Review'}
+                </Badge>
+              </View>
+              <View style={s.profileMetaRow}>
+                <Text style={s.metaKey}>Profession</Text>
+                <Text style={s.metaValue}>
+                  {profile.data?.professional_type?.replace(/_/g, ' ') ?? 'Nurse'}
+                </Text>
+              </View>
               <View style={s.profileMetaRow}>
                 <Text style={s.metaKey}>Email</Text>
                 <Text style={s.metaValue}>{user?.email}</Text>
@@ -322,11 +840,13 @@ export default function Pro() {
               </View>
               <View style={s.profileMetaRow}>
                 <Text style={s.metaKey}>Travel Radius</Text>
-                <Text style={s.metaValue}>{profile.data?.service_radius_km ?? 15} km</Text>
+                <Text style={s.metaValue}>
+                  {profile.data?.service_radius_km ?? 10} km
+                </Text>
               </View>
               <View style={s.profileMetaRow}>
-                <Text style={s.metaKey}>Platform Commission</Text>
-                <Text style={s.metaValue}>20% (You keep 80%)</Text>
+                <Text style={s.metaKey}>Payout Share</Text>
+                <Text style={s.metaValue}>80% (Mendyr 20%)</Text>
               </View>
             </Card>
 
@@ -347,19 +867,22 @@ export default function Pro() {
       {/* Bottom Tabs */}
       <View style={s.bottomTabBar}>
         <Pressable
-          onPress={() => setTab('home')}
+          onPress={() => {
+            setSelectedBooking(null);
+            setTab('home');
+          }}
           style={s.tabButton}
           accessibilityRole="button"
         >
           <Icon
             name="activity"
             size={20}
-            color={tab === 'home' ? colors.brand600 : colors.muted}
+            color={tab === 'home' && !selectedBooking ? colors.brand600 : colors.muted}
           />
           <Text
             style={[
               s.tabLabel,
-              tab === 'home' && s.tabLabelActive,
+              tab === 'home' && !selectedBooking && s.tabLabelActive,
             ]}
           >
             Overview
@@ -367,19 +890,22 @@ export default function Pro() {
         </Pressable>
 
         <Pressable
-          onPress={() => setTab('requests')}
+          onPress={() => {
+            setSelectedBooking(null);
+            setTab('requests');
+          }}
           style={s.tabButton}
           accessibilityRole="button"
         >
           <Icon
             name="clock"
             size={20}
-            color={tab === 'requests' ? colors.brand600 : colors.muted}
+            color={tab === 'requests' && !selectedBooking ? colors.brand600 : colors.muted}
           />
           <Text
             style={[
               s.tabLabel,
-              tab === 'requests' && s.tabLabelActive,
+              tab === 'requests' && !selectedBooking && s.tabLabelActive,
             ]}
           >
             Requests
@@ -387,19 +913,21 @@ export default function Pro() {
         </Pressable>
 
         <Pressable
-          onPress={() => setTab('bookings')}
+          onPress={() => {
+            setTab('bookings');
+          }}
           style={s.tabButton}
           accessibilityRole="button"
         >
           <Icon
             name="calendar"
             size={20}
-            color={tab === 'bookings' ? colors.brand600 : colors.muted}
+            color={tab === 'bookings' || selectedBooking ? colors.brand600 : colors.muted}
           />
           <Text
             style={[
               s.tabLabel,
-              tab === 'bookings' && s.tabLabelActive,
+              (tab === 'bookings' || selectedBooking) && s.tabLabelActive,
             ]}
           >
             Visits
@@ -407,19 +935,22 @@ export default function Pro() {
         </Pressable>
 
         <Pressable
-          onPress={() => setTab('profile')}
+          onPress={() => {
+            setSelectedBooking(null);
+            setTab('profile');
+          }}
           style={s.tabButton}
           accessibilityRole="button"
         >
           <Icon
             name="user"
             size={20}
-            color={tab === 'profile' ? colors.brand600 : colors.muted}
+            color={tab === 'profile' && !selectedBooking ? colors.brand600 : colors.muted}
           />
           <Text
             style={[
               s.tabLabel,
-              tab === 'profile' && s.tabLabelActive,
+              tab === 'profile' && !selectedBooking && s.tabLabelActive,
             ]}
           >
             Profile
@@ -473,7 +1004,7 @@ const s = StyleSheet.create({
   screenHeadingWrap: {
     paddingHorizontal: space.md,
     paddingTop: 12,
-    gap: 2,
+    gap: 6,
   },
   noticeWrap: {
     paddingHorizontal: space.md,
@@ -482,6 +1013,473 @@ const s = StyleSheet.create({
   scrollContainer: {
     padding: space.md,
     gap: 16,
+  },
+  filterChipsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 6,
+  },
+  filterChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radii.pill,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  filterChipActive: {
+    backgroundColor: colors.brand600,
+    borderColor: colors.brand600,
+  },
+  filterChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.muted,
+  },
+  filterChipTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  bookingRowTouch: {
+    width: '100%',
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  bookingCardInteractive: {
+    padding: 16,
+    gap: 10,
+    borderWidth: 1.5,
+  },
+  bookingPatientName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  bookingFooterInteractive: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderColor: colors.borderLight,
+  },
+  viewDetailsHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  viewDetailsText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.brand600,
+  },
+  /* Visit Detail View Styles */
+  backToVisitsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: radii.sm,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  backToVisitsText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  visitHeroCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 16,
+    gap: 12,
+  },
+  visitHeroTop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  visitHeroLeft: {
+    flex: 1,
+  },
+  visitHeroTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  visitHeroCode: {
+    fontSize: 12,
+    color: colors.muted,
+    marginTop: 2,
+  },
+  earningBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.successBg,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    alignSelf: 'flex-start',
+  },
+  earningBoxText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.success,
+  },
+  patientDetailCard: {
+    padding: 16,
+    gap: 14,
+  },
+  cardSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  cardSectionTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  patientInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  patientMetaTexts: {
+    flex: 1,
+  },
+  patientNameText: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  patientPhoneText: {
+    fontSize: 13,
+    color: colors.muted,
+    marginTop: 2,
+  },
+  callActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.success,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: radii.md,
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  callActionText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  locationDetailCard: {
+    padding: 16,
+    gap: 10,
+  },
+  addressText: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '600',
+    color: colors.ink,
+  },
+  landmarkText: {
+    fontSize: 13,
+    color: colors.muted,
+  },
+  instructionsBox: {
+    backgroundColor: colors.surfaceSubtle,
+    borderRadius: 8,
+    padding: 8,
+  },
+  instructionsText: {
+    fontSize: 12,
+    fontStyle: 'italic',
+    color: colors.muted,
+  },
+  mapsActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: colors.brand600,
+    paddingVertical: 12,
+    borderRadius: radii.md,
+    marginTop: 6,
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  mapsActionText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  timingCard: {
+    padding: 14,
+  },
+  timingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  timingTexts: {
+    flex: 1,
+  },
+  timingLabel: {
+    fontSize: 12,
+    color: colors.muted,
+  },
+  timingValue: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.ink,
+    marginTop: 1,
+  },
+  notesCard: {
+    padding: 14,
+    gap: 6,
+  },
+  notesTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  notesBody: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: colors.inkSecondary,
+  },
+  actionsCard: {
+    padding: 16,
+    gap: 8,
+  },
+  actionsTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  actionsSubtitle: {
+    fontSize: 12,
+    color: colors.muted,
+  },
+  actionButtonsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 6,
+  },
+  flexButton: {
+    flex: 2,
+  },
+  releaseButton: {
+    flex: 1,
+  },
+  completeVisitCard: {
+    padding: 16,
+    gap: 10,
+  },
+  completeVisitTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  completeVisitSub: {
+    fontSize: 12,
+    color: colors.muted,
+  },
+  formFields: {
+    gap: 12,
+    marginTop: 4,
+  },
+  fieldGroup: {
+    gap: 6,
+  },
+  fieldLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  notesInput: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.md,
+    padding: 12,
+    fontSize: 14,
+    color: colors.ink,
+    backgroundColor: '#FFFFFF',
+    minHeight: 70,
+  },
+  vitalsInput: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.md,
+    padding: 12,
+    fontSize: 14,
+    color: colors.ink,
+    backgroundColor: '#FFFFFF',
+    height: 48,
+  },
+  completedSummaryCard: {
+    padding: 16,
+    gap: 8,
+    backgroundColor: colors.successBg,
+    borderColor: colors.successBorder,
+  },
+  completedTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  completedTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.success,
+  },
+  completedTime: {
+    fontSize: 12,
+    color: colors.inkSecondary,
+  },
+  recordedNotesBox: {
+    marginTop: 6,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderColor: colors.successBorder,
+    gap: 2,
+  },
+  recordedNotesLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  recordedNotesText: {
+    fontSize: 13,
+    color: colors.inkSecondary,
+  },
+  /* Existing Styles */
+  reviewCard: {
+    backgroundColor: colors.warningBg,
+    borderColor: colors.warningBorder,
+    borderWidth: 1,
+    padding: 14,
+    gap: 10,
+  },
+  reviewHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  reviewIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#FEF3C7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reviewHeaderText: {
+    flex: 1,
+  },
+  reviewTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  reviewStatus: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.warning,
+  },
+  reviewExplanation: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: colors.inkSecondary,
+  },
+  reviewToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  reviewToggleText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.brand700,
+  },
+  reviewDetailsBox: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 12,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: colors.warningBorder,
+  },
+  reviewDetailPoint: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: colors.muted,
+  },
+  verifiedCard: {
+    backgroundColor: colors.successBg,
+    borderColor: colors.successBorder,
+    padding: 14,
+  },
+  verifiedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  verifiedTexts: {
+    flex: 1,
+  },
+  verifiedTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.success,
+  },
+  verifiedDesc: {
+    fontSize: 12,
+    color: colors.inkSecondary,
+    marginTop: 2,
+  },
+  proSummaryCard: {
+    padding: 14,
+  },
+  proSummaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  proSummaryTexts: {
+    flex: 1,
+  },
+  proSummaryName: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  proSummaryExp: {
+    fontSize: 12,
+    color: colors.muted,
+    marginTop: 2,
   },
   shareBanner: {
     backgroundColor: '#FFFFFF',
@@ -600,15 +1598,6 @@ const s = StyleSheet.create({
   acceptBtn: {
     marginTop: 4,
   },
-  bookingCard: {
-    padding: 16,
-    gap: 10,
-  },
-  bookingFooter: {
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderColor: colors.borderLight,
-  },
   bookingEarningText: {
     fontSize: 14,
     fontWeight: '800',
@@ -690,5 +1679,8 @@ const s = StyleSheet.create({
   tabLabelActive: {
     color: colors.brand600,
     fontWeight: '800',
+  },
+  pressed: {
+    opacity: 0.8,
   },
 });
