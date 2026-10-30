@@ -13,6 +13,10 @@ jobs:
   build:
     name: EAS preview APK
     runs-on: ubuntu-latest
+    env:
+      # This is a public client URL, not a secret. Set the optional GitHub repository
+      # variable MENDYR_API_URL to override it for staging or another environment.
+      EXPO_PUBLIC_API_URL: ${{ vars.MENDYR_API_URL || 'https://mendyr-backend-v1.fastapicloud.dev' }}
     permissions:
       contents: read
     steps:

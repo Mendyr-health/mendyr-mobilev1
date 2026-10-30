@@ -53,6 +53,8 @@ Development/preview profiles generate APKs; production generates an AAB. Configu
 
 The workflow at `.github/workflows/android-apk.yml` starts an EAS `preview` build on every push to `main` or manually from the Actions tab. It creates an installable APK and the job output includes its Expo download URL.
 
+The workflow embeds `https://mendyr-backend-v1.fastapicloud.dev` as `EXPO_PUBLIC_API_URL` at build time. To point a build at a different public backend, create a GitHub repository variable named `MENDYR_API_URL` under **Settings → Secrets and variables → Actions → Variables**. The backend URL is intentionally a variable rather than a secret: `EXPO_PUBLIC_*` values are included in the installed app and must never contain credentials.
+
 Before the first run, configure EAS once from a trusted local machine: set an Android package name in `app.json`, run `npx eas-cli init`, and make one successful Android EAS build so signing credentials and `extra.eas.projectId` are saved. Then create a GitHub Actions repository secret named `EXPO_TOKEN` containing an Expo access token with permission to build this project. The token is never committed.
 
 ## Verification
