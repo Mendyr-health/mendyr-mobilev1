@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   Animated,
   Platform,
@@ -18,17 +18,48 @@ interface ProNotificationBannerProps {
   onViewRequest: (request: BookingRequest) => void;
 }
 
+// Play a pleasant two-tone chime via Web Audio API on web
+function playNotificationSound() {
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    try {
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (AudioCtx) {
+        const ctx = new AudioCtx();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+
+        osc.type = 'sine';
+        // Play D5 (587 Hz) then E5 (659 Hz)
+        osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+        osc.frequency.setValueAtTime(880, ctx.currentTime + 0.1);
+
+        gain.gain.setValueAtTime(0.25, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
+
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+
+        osc.start();
+        osc.stop(ctx.currentTime + 0.45);
+      }
+    } catch {
+      // Audio playback fallback
+    }
+  }
+}
+
 export function ProNotificationBanner({
   requests,
   onViewRequest,
 }: ProNotificationBannerProps) {
   const [activeRequest, setActiveRequest] = useState<BookingRequest | null>(null);
-  const seenIdsRef = useRef<Set<string>>(new Set());
-  const isFirstLoadRef = useRef(true);
-  const translateY = useRef(new Animated.Value(-120)).current;
+  const previousRequestsRef = useRef<BookingRequest[] | null>(null);
+  const translateY = useRef(new Animated.Value(-140)).current;
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Request browser notification permission on web if available
+  // Request browser notification permission on web if supported
   useEffect(() => {
     if (Platform.OS === 'web' && 'Notification' in window) {
       if (Notification.permission === 'default') {
@@ -37,9 +68,9 @@ export function ProNotificationBanner({
     }
   }, []);
 
-  const dismiss = React.useCallback(() => {
+  const dismiss = useCallback(() => {
     Animated.timing(translateY, {
-      toValue: -120,
+      toValue: -140,
       duration: 250,
       useNativeDriver: true,
     }).start(() => {
@@ -48,31 +79,38 @@ export function ProNotificationBanner({
   }, [translateY]);
 
   useEffect(() => {
-    if (!requests || requests.length === 0) return;
+    // If requests query hasn't finished its first fetch, wait
+    if (requests === undefined) return;
 
-    if (isFirstLoadRef.current) {
-      // On first mount, populate seen requests so we don't spam on app launch
-      requests.forEach((r) => seenIdsRef.current.add(r.id));
-      isFirstLoadRef.current = false;
+    // Establish the initial baseline (even if requests is [] on load)
+    if (previousRequestsRef.current === null) {
+      previousRequestsRef.current = requests;
       return;
     }
 
-    // Find any new requests that arrived
-    const newRequests = requests.filter((r) => !seenIdsRef.current.has(r.id));
+    // Detect requests that arrived since the previous fetch
+    const previousMap = new Map(
+      previousRequestsRef.current.map((r) => [r.id, r]),
+    );
+    const brandNew = requests.filter((r) => !previousMap.has(r.id));
 
-    if (newRequests.length > 0) {
-      const latest = newRequests[0];
-      // Mark as seen
-      newRequests.forEach((r) => seenIdsRef.current.add(r.id));
+    // Update the reference baseline
+    previousRequestsRef.current = requests;
 
-      // Trigger vibration
+    if (brandNew.length > 0) {
+      const latest = brandNew[0];
+
+      // 1. Play sound
+      playNotificationSound();
+
+      // 2. Trigger vibration on native devices
       try {
-        Vibration.vibrate([0, 150, 80, 150]);
+        Vibration.vibrate([0, 180, 80, 180]);
       } catch {
         // vibration optional
       }
 
-      // Trigger Web system notification if granted
+      // 3. Trigger Web system notification if granted
       if (
         Platform.OS === 'web' &&
         'Notification' in window &&
@@ -88,7 +126,7 @@ export function ProNotificationBanner({
         }
       }
 
-      // Show in-app banner
+      // 4. Show in-app floating banner
       setActiveRequest(latest);
 
       // Slide in animation
@@ -102,10 +140,10 @@ export function ProNotificationBanner({
       // Clear existing auto-dismiss timer
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
 
-      // Auto-dismiss after 9 seconds
+      // Auto-dismiss after 10 seconds
       timeoutRef.current = setTimeout(() => {
         dismiss();
-      }, 9000);
+      }, 10000);
     }
   }, [requests, dismiss, translateY]);
 
@@ -175,14 +213,14 @@ const s = StyleSheet.create({
     ...Platform.select({
       web: {
         cursor: 'pointer',
-        boxShadow: '0 8px 24px rgba(18, 98, 226, 0.18)',
+        boxShadow: '0 8px 24px rgba(18, 98, 226, 0.22)',
       },
       default: {
         shadowColor: colors.brand600,
         shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.18,
+        shadowOpacity: 0.22,
         shadowRadius: 12,
-        elevation: 6,
+        elevation: 8,
       },
     }),
   },

@@ -346,7 +346,7 @@ export default function Register() {
           <View style={s.fields}>
             <Field
               label="Full name"
-              placeholder="e.g. Priya Sharma"
+              placeholder="e.g. Keshav Sharma"
               value={fullName}
               onChangeText={(text) => {
                 setFullName(text);

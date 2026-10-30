@@ -8,6 +8,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
@@ -41,19 +42,20 @@ export default function Pro() {
   const requests = useQuery({
     queryKey: ['requests'],
     queryFn: () => api<BookingRequest[]>('/bookings/professional/requests'),
-    refetchInterval: 12000,
+    refetchInterval: 5000,
   });
 
   const bookings = useQuery({
     queryKey: ['pro-bookings'],
     queryFn: () => api<ProBooking[]>('/bookings/professional/mine?page_size=100'),
-    refetchInterval: 25000,
+    refetchInterval: 20000,
   });
 
   const [msg, setMsg] = useState('');
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const [showReviewDetails, setShowReviewDetails] = useState(false);
   const [bookingFilter, setBookingFilter] = useState<BookingFilter>('all');
+  const [togglingAccepting, setTogglingAccepting] = useState(false);
 
   // Currently opened visit detail
   const [selectedBooking, setSelectedBooking] = useState<ProBooking | null>(null);
@@ -64,6 +66,31 @@ export default function Pro() {
   const [vitalsRecorded, setVitalsRecorded] = useState('');
 
   const isVerified = profile.data?.verification_status === 'approved';
+
+  // Toggle accepting incoming requests
+  async function handleToggleAccepting(newValue: boolean) {
+    setTogglingAccepting(true);
+    try {
+      await api<ProfessionalProfile>('/professionals/me', {
+        method: 'PATCH',
+        body: { is_accepting_bookings: newValue },
+      });
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['pro'] }),
+        qc.invalidateQueries({ queryKey: ['requests'] }),
+      ]);
+      Alert.alert(
+        newValue ? 'Requests Turned On' : 'Requests Paused',
+        newValue
+          ? 'You are now live and accepting visit requests near you!'
+          : 'You have paused incoming visit requests.',
+      );
+    } catch (e) {
+      Alert.alert('Unable to update', e instanceof Error ? e.message : 'Failed to update status.');
+    } finally {
+      setTogglingAccepting(false);
+    }
+  }
 
   // Handle incoming notification banner click
   const handleViewNotificationRequest = (request: BookingRequest) => {
@@ -540,6 +567,41 @@ export default function Pro() {
               </Card>
             )}
 
+            {/* Live Accepting Requests Toggle Card */}
+            <Card style={s.acceptingToggleCard}>
+              <View style={s.acceptingToggleTexts}>
+                <View style={s.acceptingStatusDotRow}>
+                  <View
+                    style={[
+                      s.statusDot,
+                      {
+                        backgroundColor: profile.data?.is_accepting_bookings
+                          ? colors.success
+                          : colors.muted,
+                      },
+                    ]}
+                  />
+                  <Text style={s.acceptingToggleTitle}>
+                    {profile.data?.is_accepting_bookings
+                      ? 'Accepting new requests'
+                      : 'Not accepting new requests'}
+                  </Text>
+                </View>
+                <Text style={s.acceptingToggleDesc}>
+                  {profile.data?.is_accepting_bookings
+                    ? 'Requests near you, inside your timings, show up in Requests.'
+                    : 'Turn this on when you are ready to take visits.'}
+                </Text>
+              </View>
+              <Switch
+                value={profile.data?.is_accepting_bookings ?? false}
+                onValueChange={handleToggleAccepting}
+                disabled={togglingAccepting}
+                trackColor={{ false: colors.border, true: colors.brand600 }}
+                thumbColor="#FFFFFF"
+              />
+            </Card>
+
             {/* Profession summary tile */}
             {profile.data?.professional_type && (
               <Card style={s.proSummaryCard}>
@@ -619,10 +681,58 @@ export default function Pro() {
         ) : tab === 'requests' ? (
           /* REQUESTS TAB */
           <View style={s.tabWrapper}>
-            <View style={s.screenHeadingWrap}>
-              <Title>Requests near you</Title>
-              <Body muted>Visits inside your travel radius.</Body>
+            <View style={s.requestsHeaderBar}>
+              <View style={s.requestsHeaderTexts}>
+                <Title>Requests near you</Title>
+                <Body muted>
+                  Visits inside your {profile.data?.service_radius_km ?? 15} km travel radius.
+                </Body>
+              </View>
+              <Pressable
+                onPress={() => requests.refetch()}
+                style={({ pressed }) => [s.refreshIconBtn, pressed && s.pressed]}
+                accessibilityLabel="Refresh requests"
+              >
+                <Icon
+                  name="refresh"
+                  size={18}
+                  color={requests.isFetching ? colors.brand600 : colors.muted}
+                />
+              </Pressable>
             </View>
+
+            {/* Paused Requests Warning Card */}
+            {profile.data && !profile.data.is_accepting_bookings && (
+              <View style={s.noticeWrap}>
+                <Card style={s.pausedWarningCard}>
+                  <View style={s.pausedWarningRow}>
+                    <Icon name="info" size={20} color={colors.warning} />
+                    <View style={s.pausedWarningTexts}>
+                      <Text style={s.pausedWarningTitle}>Requests are paused</Text>
+                      <Text style={s.pausedWarningSub}>
+                        Turn on requests to start receiving nearby patient bookings.
+                      </Text>
+                    </View>
+                    <Switch
+                      value={false}
+                      onValueChange={handleToggleAccepting}
+                      disabled={togglingAccepting}
+                      trackColor={{ false: colors.border, true: colors.brand600 }}
+                      thumbColor="#FFFFFF"
+                    />
+                  </View>
+                </Card>
+              </View>
+            )}
+
+            {/* Verification Pending Notice */}
+            {!isVerified && (
+              <View style={s.noticeWrap}>
+                <Notice tone="warning">
+                  Your profile is under clinical review. Patient requests become visible as soon as your council credentials are approved by our team.
+                </Notice>
+              </View>
+            )}
 
             {msg ? (
               <View style={s.noticeWrap}>
@@ -640,9 +750,74 @@ export default function Pro() {
                 keyExtractor={(item) => item.id}
                 contentContainerStyle={s.scrollContainer}
                 ListEmptyComponent={
-                  <Notice tone="info">
-                    No open visit requests right now. As patients book in your area, they will appear here in real-time.
-                  </Notice>
+                  <Card style={s.emptyRequestsCard}>
+                    <View style={s.emptyRequestsHeader}>
+                      <View style={s.emptyClockIconWrap}>
+                        <Icon name="clock" size={22} color={colors.brand600} />
+                      </View>
+                      <Text style={s.emptyRequestsTitle}>No open requests right now</Text>
+                      <Text style={s.emptyRequestsSub}>
+                        Auto-checking every 5s. As soon as a patient books near you, an alert will sound and pop up.
+                      </Text>
+                    </View>
+
+                    <View style={s.diagnosticList}>
+                      <Text style={s.diagnosticListTitle}>Things that decide what you see:</Text>
+
+                      <View style={s.diagnosticItem}>
+                        <Icon
+                          name={profile.data?.is_accepting_bookings ? 'check' : 'info'}
+                          size={16}
+                          color={profile.data?.is_accepting_bookings ? colors.success : colors.warning}
+                        />
+                        <Text style={s.diagnosticItemText}>
+                          {profile.data?.is_accepting_bookings
+                            ? "You're accepting new requests"
+                            : "You've paused new requests — switch it on above"}
+                        </Text>
+                      </View>
+
+                      <View style={s.diagnosticItem}>
+                        <Icon
+                          name={isVerified ? 'check' : 'info'}
+                          size={16}
+                          color={isVerified ? colors.success : colors.warning}
+                        />
+                        <Text style={s.diagnosticItemText}>
+                          {isVerified
+                            ? 'Verification status: Approved'
+                            : 'Verification status: Under Review (Backend activates requests upon approval)'}
+                        </Text>
+                      </View>
+
+                      <View style={s.diagnosticItem}>
+                        <Icon name="check" size={16} color={colors.success} />
+                        <Text style={s.diagnosticItemText}>
+                          Matching profession:{' '}
+                          {profile.data?.professional_type
+                            ? profile.data.professional_type.replace(/_/g, ' ')
+                            : 'Healthcare Specialist'}
+                        </Text>
+                      </View>
+
+                      <View style={s.diagnosticItem}>
+                        <Icon name="check" size={16} color={colors.success} />
+                        <Text style={s.diagnosticItemText}>
+                          Travel radius: Visits within {profile.data?.service_radius_km ?? 15} km
+                        </Text>
+                      </View>
+                    </View>
+
+                    <Button
+                      title={requests.isFetching ? 'Refreshing...' : 'Check now'}
+                      variant="outline"
+                      icon="refresh"
+                      onPress={() => requests.refetch()}
+                      loading={requests.isFetching}
+                      size="sm"
+                      style={s.manualRefreshBtn}
+                    />
+                  </Card>
                 }
                 renderItem={({ item }) => (
                   <Card style={s.requestCard}>
@@ -843,6 +1018,16 @@ export default function Pro() {
                 <Text style={s.metaValue}>
                   {profile.data?.service_radius_km ?? 10} km
                 </Text>
+              </View>
+              <View style={s.profileMetaRow}>
+                <Text style={s.metaKey}>Accepting Requests</Text>
+                <Switch
+                  value={profile.data?.is_accepting_bookings ?? false}
+                  onValueChange={handleToggleAccepting}
+                  disabled={togglingAccepting}
+                  trackColor={{ false: colors.border, true: colors.brand600 }}
+                  thumbColor="#FFFFFF"
+                />
               </View>
               <View style={s.profileMetaRow}>
                 <Text style={s.metaKey}>Payout Share</Text>
@@ -1651,6 +1836,147 @@ const s = StyleSheet.create({
   },
   loader: {
     marginTop: 32,
+  },
+  acceptingToggleCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+    gap: 12,
+  },
+  acceptingToggleTexts: {
+    flex: 1,
+    gap: 4,
+  },
+  acceptingStatusDotRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  statusDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+  },
+  acceptingToggleTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  acceptingToggleDesc: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: colors.muted,
+  },
+  requestsHeaderBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: space.md,
+    paddingTop: 12,
+  },
+  requestsHeaderTexts: {
+    flex: 1,
+    gap: 4,
+  },
+  refreshIconBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  pausedWarningCard: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FCD34D',
+    padding: 14,
+  },
+  pausedWarningRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  pausedWarningTexts: {
+    flex: 1,
+    gap: 2,
+  },
+  pausedWarningTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#92400E',
+  },
+  pausedWarningSub: {
+    fontSize: 12,
+    color: '#B45309',
+    lineHeight: 16,
+  },
+  emptyRequestsCard: {
+    padding: 20,
+    gap: 16,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+  },
+  emptyRequestsHeader: {
+    alignItems: 'center',
+    gap: 8,
+  },
+  emptyClockIconWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: colors.brand50,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  emptyRequestsTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.ink,
+    textAlign: 'center',
+  },
+  emptyRequestsSub: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: colors.muted,
+    textAlign: 'center',
+  },
+  diagnosticList: {
+    backgroundColor: colors.background,
+    borderRadius: 14,
+    padding: 14,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  diagnosticListTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.ink,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  diagnosticItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  diagnosticItemText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 18,
+    color: colors.inkSecondary,
+  },
+  manualRefreshBtn: {
+    alignSelf: 'center',
+    marginTop: 4,
   },
   bottomTabBar: {
     flexDirection: 'row',

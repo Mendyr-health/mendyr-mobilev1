@@ -19,6 +19,7 @@ import {
   MapPin,
   Phone,
   Plus,
+  RefreshCw,
   Shield,
   ShieldCheck,
   Sparkles,
@@ -58,6 +59,7 @@ export type IconName =
   | 'sparkles'
   | 'rupee'
   | 'info'
+  | 'refresh'
   | 'list';
 
 const ICON_MAP: Record<IconName, LucideIcon> = {
@@ -86,6 +88,7 @@ const ICON_MAP: Record<IconName, LucideIcon> = {
   sparkles: Sparkles,
   rupee: IndianRupee,
   info: Info,
+  refresh: RefreshCw,
   list: List,
 };
 
