@@ -51,7 +51,7 @@ export default function Patient() {
   const bookings = useQuery({
     queryKey: ['bookings'],
     queryFn: () => api<BookingListItem[]>('/bookings?page_size=100'),
-    refetchInterval: 15000,
+    refetchInterval: 5000,
   });
 
   const addresses = useQuery({
@@ -64,6 +64,19 @@ export default function Patient() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
 
+  // Cancellation state
+  const CANCEL_REASONS = [
+    'Change of plans',
+    'Booked by mistake',
+    'Patient feeling better',
+    'Need a different time',
+    'Caregiver took too long',
+    'Other reason',
+  ];
+  const [cancelling, setCancelling] = useState(false);
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [cancelReason, setCancelReason] = useState(CANCEL_REASONS[0]);
+
   // Patient opened booking detail
   const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null);
 
@@ -71,7 +84,32 @@ export default function Patient() {
     queryKey: ['booking-detail', selectedBookingId],
     queryFn: () => (selectedBookingId ? api<Booking>(`/bookings/${selectedBookingId}`) : null),
     enabled: !!selectedBookingId,
+    refetchInterval: 5000,
   });
+
+  async function handleCancelBooking(bookingId: string) {
+    setCancelling(true);
+    try {
+      await api<Booking>(`/bookings/${bookingId}/cancel`, {
+        method: 'POST',
+        body: { reason: cancelReason },
+      });
+      setShowCancelModal(false);
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['bookings'] }),
+        qc.invalidateQueries({ queryKey: ['booking-detail', bookingId] }),
+        qc.invalidateQueries({ queryKey: ['pro-bookings'] }),
+      ]);
+      Alert.alert('Booking Cancelled', 'Your appointment has been cancelled successfully.');
+    } catch (e) {
+      Alert.alert(
+        'Cancellation failed',
+        e instanceof Error ? e.message : 'Could not cancel booking.',
+      );
+    } finally {
+      setCancelling(false);
+    }
+  }
 
   async function book() {
     if (!selectedService) {
@@ -265,6 +303,80 @@ export default function Patient() {
                     </Text>
                   </View>
                 </Card>
+
+                {/* CANCELLED STATUS CARD */}
+                {bookingDetail.data.status === 'cancelled' && (
+                  <Card style={s.cancelledCard}>
+                    <View style={s.cancelledHeader}>
+                      <Icon name="x" size={20} color="#DC2626" strokeWidth={2.4} />
+                      <Text style={s.cancelledTitle}>Booking Cancelled</Text>
+                    </View>
+                    <Text style={s.cancelledDesc}>
+                      {bookingDetail.data.cancellation_reason
+                        ? `Reason: ${bookingDetail.data.cancellation_reason}`
+                        : 'This booking has been cancelled.'}
+                    </Text>
+                  </Card>
+                )}
+
+                {/* CANCEL BOOKING BUTTON / PANEL */}
+                {bookingDetail.data &&
+                  ['created', 'searching', 'assigned', 'confirmed'].includes(
+                    bookingDetail.data.status,
+                  ) && (
+                    <Card style={s.cancelPanelCard}>
+                      {!showCancelModal ? (
+                        <Button
+                          title="Cancel visit"
+                          variant="outline"
+                          onPress={() => setShowCancelModal(true)}
+                        />
+                      ) : (
+                        <View style={s.cancelForm}>
+                          <Text style={s.cancelFormTitle}>Cancel this visit?</Text>
+                          <Text style={s.cancelFormSub}>Please select a reason:</Text>
+                          <View style={s.cancelReasonsWrap}>
+                            {CANCEL_REASONS.map((r) => (
+                              <Pressable
+                                key={r}
+                                onPress={() => setCancelReason(r)}
+                                style={[
+                                  s.cancelReasonChip,
+                                  cancelReason === r && s.cancelReasonChipActive,
+                                ]}
+                              >
+                                <Text
+                                  style={[
+                                    s.cancelReasonChipText,
+                                    cancelReason === r && s.cancelReasonChipTextActive,
+                                  ]}
+                                >
+                                  {r}
+                                </Text>
+                              </Pressable>
+                            ))}
+                          </View>
+                          <View style={s.cancelActionButtonsRow}>
+                            <Button
+                              title="Yes, cancel visit"
+                              onPress={() => {
+                                if (bookingDetail.data) {
+                                  handleCancelBooking(bookingDetail.data.id);
+                                }
+                              }}
+                              loading={cancelling}
+                              style={s.confirmCancelBtn}
+                            />
+                            <Button
+                              title="Keep booking"
+                              variant="ghost"
+                              onPress={() => setShowCancelModal(false)}
+                            />
+                          </View>
+                        </View>
+                      )}
+                    </Card>
+                  )}
 
                 {/* CLINICAL SUMMARY NOTES (If completed) */}
                 {bookingDetail.data.visit_summary_notes && (
@@ -489,9 +601,22 @@ export default function Patient() {
           </ScrollView>
         ) : tab === 'bookings' ? (
           <View style={s.tabWrapper}>
-            <View style={s.screenHeadingWrap}>
-              <Title>Your bookings</Title>
-              <Body muted>Tap on any booking to view caregiver contact and details.</Body>
+            <View style={s.bookingsHeaderBar}>
+              <View style={s.headerTextsWrap}>
+                <Title>Your bookings</Title>
+                <Body muted>Tap on any booking to view caregiver contact and details.</Body>
+              </View>
+              <Pressable
+                onPress={() => bookings.refetch()}
+                style={({ pressed }) => [s.refreshIconBtn, pressed && s.pressed]}
+                accessibilityLabel="Refresh bookings"
+              >
+                <Icon
+                  name="refresh"
+                  size={18}
+                  color={bookings.isFetching ? colors.brand600 : colors.muted}
+                />
+              </Pressable>
             </View>
 
             {bookings.isLoading ? (
@@ -520,6 +645,13 @@ export default function Patient() {
                           {statusLabel(item.status)}
                         </Badge>
                       </View>
+
+                      {item.status === 'cancelled' && (
+                        <View style={s.cancelledMiniTag}>
+                          <Icon name="x" size={12} color="#DC2626" strokeWidth={2.4} />
+                          <Text style={s.cancelledMiniTagText}>Cancelled</Text>
+                        </View>
+                      )}
 
                       <View style={s.bookingMetaRow}>
                         <Icon name="clock" size={14} color={colors.muted} />
@@ -1216,5 +1348,119 @@ const s = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
     color: colors.inkSecondary,
+  },
+  cancelledCard: {
+    padding: 16,
+    gap: 8,
+    backgroundColor: '#FEF2F2',
+    borderColor: '#F87171',
+  },
+  cancelledHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  cancelledTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#DC2626',
+  },
+  cancelledDesc: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: '#991B1B',
+  },
+  cancelPanelCard: {
+    padding: 16,
+    gap: 12,
+  },
+  cancelForm: {
+    gap: 10,
+  },
+  cancelFormTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  cancelFormSub: {
+    fontSize: 12,
+    color: colors.muted,
+  },
+  cancelReasonsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginVertical: 4,
+  },
+  cancelReasonChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: radii.pill,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  cancelReasonChipActive: {
+    backgroundColor: '#FEE2E2',
+    borderColor: '#DC2626',
+  },
+  cancelReasonChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.inkSecondary,
+  },
+  cancelReasonChipTextActive: {
+    color: '#DC2626',
+    fontWeight: '700',
+  },
+  cancelActionButtonsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 6,
+  },
+  confirmCancelBtn: {
+    backgroundColor: '#DC2626',
+  },
+  bookingsHeaderBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: space.md,
+    paddingTop: 12,
+  },
+  headerTextsWrap: {
+    flex: 1,
+    gap: 4,
+  },
+  refreshIconBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  cancelledMiniTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+  },
+  cancelledMiniTagText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#DC2626',
   },
 });

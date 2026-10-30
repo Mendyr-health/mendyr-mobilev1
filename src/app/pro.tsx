@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -24,10 +24,13 @@ import type { BookingRequest, ProBooking, ProfessionalProfile } from '@/lib/type
 import { colors, radii, space } from '@/constants/theme';
 import { Icon, ProfessionIcon } from '@/components/icons';
 import { Avatar, Badge, Button, Card, Notice, Title, Body } from '@/components/ui';
-import { ProNotificationBanner } from '@/components/pro-notification-banner';
+import {
+  ProNotificationBanner,
+  requestNotificationPermission,
+} from '@/components/pro-notification-banner';
 
 type Tab = 'home' | 'requests' | 'bookings' | 'profile';
-type BookingFilter = 'all' | 'upcoming' | 'completed';
+type BookingFilter = 'all' | 'upcoming' | 'completed' | 'cancelled';
 
 export default function Pro() {
   const { user, logout } = useAuth();
@@ -48,7 +51,7 @@ export default function Pro() {
   const bookings = useQuery({
     queryKey: ['pro-bookings'],
     queryFn: () => api<ProBooking[]>('/bookings/professional/mine?page_size=100'),
-    refetchInterval: 20000,
+    refetchInterval: 5000,
   });
 
   const [msg, setMsg] = useState('');
@@ -56,6 +59,7 @@ export default function Pro() {
   const [showReviewDetails, setShowReviewDetails] = useState(false);
   const [bookingFilter, setBookingFilter] = useState<BookingFilter>('all');
   const [togglingAccepting, setTogglingAccepting] = useState(false);
+  const [hasNotificationPermission, setHasNotificationPermission] = useState<boolean>(true);
 
   // Currently opened visit detail
   const [selectedBooking, setSelectedBooking] = useState<ProBooking | null>(null);
@@ -66,6 +70,38 @@ export default function Pro() {
   const [vitalsRecorded, setVitalsRecorded] = useState('');
 
   const isVerified = profile.data?.verification_status === 'approved';
+
+  // Check Web/PWA Notification Permission
+  useEffect(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && 'Notification' in window) {
+      setHasNotificationPermission(Notification.permission === 'granted');
+    }
+  }, []);
+
+  const handleEnableSystemNotifications = async () => {
+    const granted = await requestNotificationPermission();
+    setHasNotificationPermission(granted);
+    if (granted) {
+      Alert.alert(
+        'System Notifications Active! 🔔',
+        'You will now get alerts outside the app on your device when bookings are requested or cancelled.',
+      );
+    }
+  };
+
+  // Keep selectedBooking in sync when bookings refetches (e.g. if patient cancels)
+  useEffect(() => {
+    if (selectedBooking && bookings.data) {
+      const latest = bookings.data.find((b) => b.id === selectedBooking.id);
+      if (
+        latest &&
+        (latest.status !== selectedBooking.status ||
+          latest.completed_at !== selectedBooking.completed_at)
+      ) {
+        setSelectedBooking(latest);
+      }
+    }
+  }, [bookings.data, selectedBooking]);
 
   // Toggle accepting incoming requests
   async function handleToggleAccepting(newValue: boolean) {
@@ -93,8 +129,13 @@ export default function Pro() {
   }
 
   // Handle incoming notification banner click
-  const handleViewNotificationRequest = (request: BookingRequest) => {
+  const handleViewNotificationRequest = (_request: BookingRequest) => {
     setTab('requests');
+  };
+
+  const handleViewNotificationBooking = (booking: ProBooking) => {
+    setSelectedBooking(booking);
+    setTab('bookings');
   };
 
   // Dial patient phone
@@ -237,15 +278,20 @@ export default function Pro() {
     if (bookingFilter === 'completed') {
       return b.status === 'completed';
     }
+    if (bookingFilter === 'cancelled') {
+      return ['cancelled', 'no_show', 'failed'].includes(b.status);
+    }
     return true;
   });
 
   return (
     <SafeAreaView style={s.root} edges={['top', 'bottom']}>
-      {/* Floating In-App Live Notification Banner for New Requests */}
+      {/* Floating In-App Live Notification Banner for New Requests & Cancellations */}
       <ProNotificationBanner
         requests={requests.data}
+        bookings={bookings.data}
         onViewRequest={handleViewNotificationRequest}
+        onViewBooking={handleViewNotificationBooking}
       />
 
       {/* Header bar */}
@@ -317,6 +363,12 @@ export default function Pro() {
                 </Text>
               </View>
             </View>
+
+            {selectedBooking.status === 'cancelled' && (
+              <Notice tone="error">
+                The patient cancelled this booking. No visit or travel is required.
+              </Notice>
+            )}
 
             {/* PATIENT CONTACT CARD */}
             <Card style={s.patientDetailCard}>
@@ -602,6 +654,28 @@ export default function Pro() {
               />
             </Card>
 
+            {/* Outside-the-App Notification Permission Banner */}
+            {Platform.OS === 'web' && !hasNotificationPermission && (
+              <Card style={s.permissionBannerCard}>
+                <View style={s.permissionBannerRow}>
+                  <View style={s.permissionIconWrap}>
+                    <Icon name="sparkles" size={18} color={colors.brand600} />
+                  </View>
+                  <View style={s.permissionBannerTexts}>
+                    <Text style={s.permissionBannerTitle}>Get Alerts Outside The App</Text>
+                    <Text style={s.permissionBannerSub}>
+                      Receive lock-screen alerts & chimes even when your phone or browser is in the background.
+                    </Text>
+                  </View>
+                  <Button
+                    title="Enable"
+                    size="sm"
+                    onPress={handleEnableSystemNotifications}
+                  />
+                </View>
+              </Card>
+            )}
+
             {/* Profession summary tile */}
             {profile.data?.professional_type && (
               <Card style={s.proSummaryCard}>
@@ -868,13 +942,28 @@ export default function Pro() {
         ) : tab === 'bookings' ? (
           /* YOUR VISITS TAB (Interactive List) */
           <View style={s.tabWrapper}>
-            <View style={s.screenHeadingWrap}>
-              <Title>Your visits</Title>
-              <Body muted>Tap on any visit to see patient details, call, or open Google Maps.</Body>
+            <View style={s.requestsHeaderBar}>
+              <View style={s.requestsHeaderTexts}>
+                <Title>Your visits</Title>
+                <Body muted>Tap on any visit to see patient details, call, or open Google Maps.</Body>
+              </View>
+              <Pressable
+                onPress={() => bookings.refetch()}
+                style={({ pressed }) => [s.refreshIconBtn, pressed && s.pressed]}
+                accessibilityLabel="Refresh visits"
+              >
+                <Icon
+                  name="refresh"
+                  size={18}
+                  color={bookings.isFetching ? colors.brand600 : colors.muted}
+                />
+              </Pressable>
+            </View>
 
+            <View style={s.screenHeadingWrap}>
               {/* Filter Chips */}
               <View style={s.filterChipsRow}>
-                {(['all', 'upcoming', 'completed'] as BookingFilter[]).map((f) => (
+                {(['all', 'upcoming', 'completed', 'cancelled'] as BookingFilter[]).map((f) => (
                   <Pressable
                     key={f}
                     onPress={() => setBookingFilter(f)}
@@ -893,7 +982,9 @@ export default function Pro() {
                         ? `All (${allBookings.length})`
                         : f === 'upcoming'
                         ? 'Upcoming'
-                        : 'Completed'}
+                        : f === 'completed'
+                        ? 'Completed'
+                        : 'Cancelled'}
                     </Text>
                   </Pressable>
                 ))}
@@ -909,7 +1000,9 @@ export default function Pro() {
                 contentContainerStyle={s.scrollContainer}
                 ListEmptyComponent={
                   <Notice tone="info">
-                    You have no {bookingFilter !== 'all' ? bookingFilter : ''} visits yet. Accept open requests from the Requests tab to start taking visits.
+                    {bookingFilter === 'cancelled'
+                      ? 'No cancelled visits.'
+                      : `You have no ${bookingFilter !== 'all' ? bookingFilter : ''} visits yet. Accept open requests from the Requests tab to start taking visits.`}
                   </Notice>
                 }
                 renderItem={({ item }) => (
@@ -926,12 +1019,21 @@ export default function Pro() {
                               ? 'green'
                               : item.status === 'in_progress'
                               ? 'violet'
+                              : item.status === 'cancelled'
+                              ? 'red'
                               : 'blue'
                           }
                         >
                           {statusLabel(item.status)}
                         </Badge>
                       </View>
+
+                      {item.status === 'cancelled' && (
+                        <View style={s.cancelledBannerMini}>
+                          <Icon name="x" size={13} color="#DC2626" strokeWidth={2.4} />
+                          <Text style={s.cancelledBannerMiniText}>The patient cancelled this booking</Text>
+                        </View>
+                      )}
 
                       <View style={s.requestMetaRow}>
                         <Icon name="clock" size={14} color={colors.muted} />
@@ -1977,6 +2079,53 @@ const s = StyleSheet.create({
   manualRefreshBtn: {
     alignSelf: 'center',
     marginTop: 4,
+  },
+  permissionBannerCard: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#BFDBFE',
+    padding: 14,
+  },
+  permissionBannerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  permissionIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#DBEAFE',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  permissionBannerTexts: {
+    flex: 1,
+    gap: 2,
+  },
+  permissionBannerTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#1E40AF',
+  },
+  permissionBannerSub: {
+    fontSize: 11,
+    lineHeight: 16,
+    color: '#3B82F6',
+  },
+  cancelledBannerMini: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+  },
+  cancelledBannerMiniText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#DC2626',
   },
   bottomTabBar: {
     flexDirection: 'row',
