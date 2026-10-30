@@ -35,7 +35,7 @@ npm install
 npm run android
 ```
 
-For an Android emulator with a local backend, set `EXPO_PUBLIC_API_URL=http://10.0.2.2:8000`. For a physical device, use a reachable HTTPS/LAN backend. Restart Expo after changing `.env`.
+The checked-in example uses the deployed backend, `https://mendyr-backend-v1.fastapicloud.dev`. For an Android emulator with a local backend instead, set `EXPO_PUBLIC_API_URL=http://10.0.2.2:8000`. Restart Expo after changing `.env`.
 
 Run `npm run typecheck`. Use `npm start` then press `a`, or scan the development-build/Expo Go QR code.
 
