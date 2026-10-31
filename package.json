@@ -23,6 +23,7 @@
     "expo-font": "~55.0.8",
     "expo-glass-effect": "~55.0.11",
     "expo-image": "~55.0.11",
+    "expo-image-picker": "~55.0.24",
     "expo-linking": "~55.0.17",
     "expo-location": "~55.1.15",
     "expo-router": "~55.0.18",

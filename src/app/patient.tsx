@@ -6,6 +6,7 @@ import {
   BackHandler,
   FlatList,
   Linking,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -15,6 +16,7 @@ import {
   ToastAndroid,
   View,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 import { Image } from 'expo-image';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -213,6 +215,12 @@ export default function Patient() {
 
   // Patient opened booking detail
   const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null);
+
+  // Prescription state
+  const [prescriptionUrl, setPrescriptionUrl] = useState<string | null>(null);
+  const [prescriptionFileName, setPrescriptionFileName] = useState<string | null>(null);
+  const [uploadingPrescription, setUploadingPrescription] = useState(false);
+  const [viewingPrescriptionUrl, setViewingPrescriptionUrl] = useState<string | null>(null);
 
   const bookingDetail = useQuery({
     queryKey: ['booking-detail', selectedBookingId],
@@ -586,6 +594,63 @@ export default function Patient() {
     }
   }
 
+  const handlePickPrescriptionImage = async () => {
+    try {
+      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permissionResult.granted) {
+        Alert.alert('Permission required', 'Permission to access gallery is required to upload a prescription.');
+        return;
+      }
+      setUploadingPrescription(true);
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: false,
+        quality: 0.7,
+        base64: true,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const asset = result.assets[0];
+        const dataUri = asset.base64 ? `data:image/jpeg;base64,${asset.base64}` : asset.uri;
+        setPrescriptionUrl(dataUri);
+        const fileName = asset.fileName || 'Prescription Image';
+        setPrescriptionFileName(fileName);
+      }
+    } catch {
+      Alert.alert('Error', 'Failed to pick prescription image.');
+    } finally {
+      setUploadingPrescription(false);
+    }
+  };
+
+  const handleTakePrescriptionPhoto = async () => {
+    try {
+      const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permissionResult.granted) {
+        Alert.alert('Permission required', 'Permission to access camera is required to take a photo of your prescription.');
+        return;
+      }
+      setUploadingPrescription(true);
+      const result = await ImagePicker.launchCameraAsync({
+        allowsEditing: false,
+        quality: 0.7,
+        base64: true,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const asset = result.assets[0];
+        const dataUri = asset.base64 ? `data:image/jpeg;base64,${asset.base64}` : asset.uri;
+        setPrescriptionUrl(dataUri);
+        const fileName = asset.fileName || 'Camera Photo';
+        setPrescriptionFileName(fileName);
+      }
+    } catch {
+      Alert.alert('Error', 'Failed to capture prescription photo.');
+    } finally {
+      setUploadingPrescription(false);
+    }
+  };
+
   async function book() {
     if (!selectedService) {
       setMessage('Please choose a care service in Step 1.');
@@ -617,6 +682,7 @@ export default function Patient() {
           address_id: activeAddress.id,
           scheduled_start_at: scheduledAt,
           patient_notes: notes.trim() || null,
+          prescription_url: prescriptionUrl || null,
         },
       });
 
@@ -629,6 +695,8 @@ export default function Patient() {
       setSelectedService(null);
       setPickedTime(null);
       setNotes('');
+      setPrescriptionUrl(null);
+      setPrescriptionFileName(null);
     } catch (e) {
       setMessage(e instanceof Error ? e.message : 'Booking could not be created.');
     } finally {
@@ -894,6 +962,33 @@ export default function Patient() {
                     </Text>
                   </View>
                 </Card>
+
+                {/* UPLOADED PRESCRIPTION (If available) */}
+                {bookingDetail.data.prescription_url && (
+                  <Card style={s.prescriptionDetailCard}>
+                    <Text style={s.sectionCardTitle}>Doctor&apos;s Prescription</Text>
+                    <Pressable
+                      style={s.prescriptionDetailRow}
+                      onPress={() => setViewingPrescriptionUrl(bookingDetail.data?.prescription_url ?? null)}
+                    >
+                      <Image
+                        source={{ uri: bookingDetail.data.prescription_url }}
+                        style={s.prescriptionThumbLarge}
+                        contentFit="cover"
+                      />
+                      <View style={s.prescriptionDetailMeta}>
+                        <Text style={s.prescriptionDetailHeading}>Prescription Attached</Text>
+                        <Text style={s.prescriptionDetailSub}>
+                          Shared with your assigned nurse
+                        </Text>
+                        <View style={s.viewDocumentBadge}>
+                          <Icon name="search" size={14} color={colors.brand600} />
+                          <Text style={s.viewDocumentBadgeText}>View Full Screen</Text>
+                        </View>
+                      </View>
+                    </Pressable>
+                  </Card>
+                )}
 
                 {/* CANCELLED STATUS CARD */}
                 {bookingDetail.data.status === 'cancelled' && (
@@ -1480,6 +1575,95 @@ export default function Patient() {
               multiline
               numberOfLines={3}
             />
+
+            {/* Step 5: Prescription / Doctor's order (optional) */}
+            <View style={s.stepSectionHeader}>
+              <View style={s.stepNumberBadge}>
+                <Text style={s.stepNumberText}>5</Text>
+              </View>
+              <View style={s.stepHeaderTexts}>
+                <Text style={s.fieldHeading}>Doctor&apos;s prescription (optional)</Text>
+                <Text style={s.fieldSub}>
+                  Upload a photo of your prescription or doctor&apos;s order.
+                </Text>
+              </View>
+            </View>
+
+            {prescriptionUrl ? (
+              <Card style={s.prescriptionPreviewCard}>
+                <View style={s.prescriptionPreviewRow}>
+                  <Pressable
+                    onPress={() => setViewingPrescriptionUrl(prescriptionUrl)}
+                    style={s.prescriptionThumbWrap}
+                  >
+                    <Image
+                      source={{ uri: prescriptionUrl }}
+                      style={s.prescriptionThumb}
+                      contentFit="cover"
+                    />
+                    <View style={s.prescriptionThumbOverlay}>
+                      <Icon name="search" size={14} color="#FFFFFF" />
+                    </View>
+                  </Pressable>
+                  <View style={s.prescriptionMeta}>
+                    <Text style={s.prescriptionFileName} numberOfLines={1}>
+                      {prescriptionFileName || 'Prescription Document'}
+                    </Text>
+                    <Text style={s.prescriptionHelp}>Tap image to preview</Text>
+                    <View style={s.prescriptionActionsRow}>
+                      <Pressable
+                        onPress={() => {
+                          setPrescriptionUrl(null);
+                          setPrescriptionFileName(null);
+                        }}
+                        style={s.prescriptionRemoveBtn}
+                      >
+                        <Icon name="trash" size={14} color="#DC2626" />
+                        <Text style={s.prescriptionRemoveText}>Remove</Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={handlePickPrescriptionImage}
+                        style={s.prescriptionChangeBtn}
+                      >
+                        <Icon name="refresh" size={14} color={colors.brand600} />
+                        <Text style={s.prescriptionChangeText}>Change</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                </View>
+              </Card>
+            ) : (
+              <Card style={s.uploadBoxCard}>
+                {uploadingPrescription ? (
+                  <View style={s.uploadLoadingWrap}>
+                    <ActivityIndicator color={colors.brand600} size="small" />
+                    <Text style={s.uploadLoadingText}>Processing image...</Text>
+                  </View>
+                ) : (
+                  <View style={s.uploadButtonContainer}>
+                    <Text style={s.uploadBoxDesc}>
+                      Have a doctor&apos;s prescription or notes? The assigned nurse can review it before the visit.
+                    </Text>
+                    <View style={s.uploadBtnRow}>
+                      <Pressable
+                        style={({ pressed }) => [s.uploadActionBtn, pressed && s.pressed]}
+                        onPress={handleTakePrescriptionPhoto}
+                      >
+                        <Icon name="camera" size={18} color={colors.brand600} />
+                        <Text style={s.uploadActionBtnText}>Take Photo</Text>
+                      </Pressable>
+                      <Pressable
+                        style={({ pressed }) => [s.uploadActionBtn, pressed && s.pressed]}
+                        onPress={handlePickPrescriptionImage}
+                      >
+                        <Icon name="upload" size={18} color={colors.brand600} />
+                        <Text style={s.uploadActionBtnText}>Choose Image</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                )}
+              </Card>
+            )}
 
             {/* Summary card before confirm */}
             {selectedService && (
@@ -2169,6 +2353,35 @@ export default function Patient() {
           </View>
         </Animated.View>
       )}
+
+      {/* Full-screen Prescription Viewer Modal */}
+      <Modal
+        visible={!!viewingPrescriptionUrl}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setViewingPrescriptionUrl(null)}
+      >
+        <SafeAreaView style={s.prescriptionModalOverlay}>
+          <View style={s.prescriptionModalHeader}>
+            <Text style={s.prescriptionModalTitle}>Doctor&apos;s Prescription</Text>
+            <Pressable
+              onPress={() => setViewingPrescriptionUrl(null)}
+              style={s.prescriptionModalCloseBtn}
+            >
+              <Icon name="x" size={24} color="#ffffff" />
+            </Pressable>
+          </View>
+          <View style={s.prescriptionModalBody}>
+            {viewingPrescriptionUrl ? (
+              <Image
+                source={{ uri: viewingPrescriptionUrl }}
+                style={s.prescriptionModalImage}
+                contentFit="contain"
+              />
+            ) : null}
+          </View>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -3568,5 +3781,198 @@ const s = StyleSheet.create({
     fontWeight: '500',
     color: 'rgba(255, 255, 255, 0.7)',
     textAlign: 'center',
+  },
+  prescriptionPreviewCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: space.md,
+    marginBottom: space.md,
+  },
+  prescriptionPreviewRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  prescriptionThumbWrap: {
+    width: 64,
+    height: 64,
+    borderRadius: radii.sm,
+    overflow: 'hidden',
+    backgroundColor: '#E2E8F0',
+    position: 'relative',
+  },
+  prescriptionThumb: {
+    width: '100%',
+    height: '100%',
+  },
+  prescriptionThumbOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    padding: 3,
+    borderTopLeftRadius: 4,
+  },
+  prescriptionMeta: {
+    flex: 1,
+  },
+  prescriptionFileName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.ink,
+  },
+  prescriptionHelp: {
+    fontSize: 12,
+    color: colors.muted,
+    marginTop: 2,
+  },
+  prescriptionActionsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 6,
+  },
+  prescriptionRemoveBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  prescriptionRemoveText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#DC2626',
+  },
+  prescriptionChangeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  prescriptionChangeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.brand600,
+  },
+  uploadBoxCard: {
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: '#CBD5E1',
+    backgroundColor: '#F8FAFC',
+    borderRadius: radii.md,
+    padding: space.md,
+    marginBottom: space.md,
+  },
+  uploadLoadingWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+  },
+  uploadLoadingText: {
+    fontSize: 13,
+    color: colors.muted,
+    fontWeight: '500',
+  },
+  uploadButtonContainer: {
+    gap: 10,
+  },
+  uploadBoxDesc: {
+    fontSize: 13,
+    color: colors.muted,
+    lineHeight: 18,
+  },
+  uploadBtnRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  uploadActionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#EFF6FF',
+    borderRadius: radii.sm,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  uploadActionBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.brand600,
+  },
+  prescriptionDetailCard: {
+    marginBottom: space.md,
+    backgroundColor: '#FFFFFF',
+    borderRadius: radii.md,
+    padding: space.md,
+  },
+  prescriptionDetailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 8,
+  },
+  prescriptionThumbLarge: {
+    width: 60,
+    height: 60,
+    borderRadius: radii.sm,
+    backgroundColor: '#E2E8F0',
+  },
+  prescriptionDetailMeta: {
+    flex: 1,
+  },
+  prescriptionDetailHeading: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.ink,
+  },
+  prescriptionDetailSub: {
+    fontSize: 12,
+    color: colors.muted,
+    marginTop: 2,
+    marginBottom: 4,
+  },
+  viewDocumentBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  viewDocumentBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.brand600,
+  },
+  prescriptionModalOverlay: {
+    flex: 1,
+    backgroundColor: '#0F172A',
+  },
+  prescriptionModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: space.lg,
+    paddingVertical: space.md,
+    backgroundColor: '#1E293B',
+  },
+  prescriptionModalTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  prescriptionModalCloseBtn: {
+    padding: 6,
+  },
+  prescriptionModalBody: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: space.md,
+  },
+  prescriptionModalImage: {
+    width: '100%',
+    height: '100%',
   },
 });

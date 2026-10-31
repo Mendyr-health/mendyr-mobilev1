@@ -5,11 +5,14 @@ import {
   ArrowRight,
   Baby,
   Calendar,
+  Camera,
   Check,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Clock,
+  Eye,
+  FileText,
   FlaskConical,
   Heart,
   IndianRupee,
@@ -22,12 +25,14 @@ import {
   Phone,
   Plus,
   RefreshCw,
+  Search,
   Shield,
   ShieldCheck,
   Sparkles,
   Star,
   Stethoscope,
   Trash2,
+  Upload,
   User,
   Users,
   X,
@@ -66,7 +71,12 @@ export type IconName =
   | 'list'
   | 'mail'
   | 'edit'
-  | 'trash';
+  | 'trash'
+  | 'camera'
+  | 'upload'
+  | 'fileText'
+  | 'eye'
+  | 'search';
 
 const ICON_MAP: Record<IconName, LucideIcon> = {
   heart: Heart,
@@ -99,6 +109,11 @@ const ICON_MAP: Record<IconName, LucideIcon> = {
   mail: Mail,
   edit: Pencil,
   trash: Trash2,
+  camera: Camera,
+  upload: Upload,
+  fileText: FileText,
+  eye: Eye,
+  search: Search,
 };
 
 interface IconProps {

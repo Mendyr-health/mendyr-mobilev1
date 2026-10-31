@@ -6,6 +6,7 @@ import {
   BackHandler,
   FlatList,
   Linking,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -16,6 +17,7 @@ import {
   ToastAndroid,
   View,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { router } from 'expo-router';
@@ -89,6 +91,7 @@ export default function Pro() {
 
   // Currently opened visit detail
   const [selectedBooking, setSelectedBooking] = useState<ProBooking | null>(null);
+  const [viewingPrescriptionUrl, setViewingPrescriptionUrl] = useState<string | null>(null);
 
   // Visit action states
   const [actionBusy, setActionBusy] = useState<'start' | 'complete' | 'release' | null>(null);
@@ -666,6 +669,39 @@ export default function Pro() {
               <Card style={s.notesCard}>
                 <Text style={s.notesTitle}>Patient Notes</Text>
                 <Text style={s.notesBody}>{selectedBooking.patient_notes}</Text>
+              </Card>
+            ) : null}
+
+            {/* DOCTOR'S PRESCRIPTION / DOCUMENT */}
+            {selectedBooking.prescription_url ? (
+              <Card style={s.prescriptionCard}>
+                <View style={s.prescriptionCardHeader}>
+                  <View>
+                    <Text style={s.prescriptionCardTitle}>Doctor&apos;s Prescription / Order</Text>
+                    <Text style={s.prescriptionCardSub}>
+                      Uploaded by patient for this visit
+                    </Text>
+                  </View>
+                  <View style={s.prescriptionBadge}>
+                    <Icon name="checkCircle" size={14} color="#059669" />
+                    <Text style={s.prescriptionBadgeText}>Attached</Text>
+                  </View>
+                </View>
+
+                <Pressable
+                  style={({ pressed }) => [s.prescriptionPreviewPressable, pressed && s.pressed]}
+                  onPress={() => setViewingPrescriptionUrl(selectedBooking.prescription_url ?? null)}
+                >
+                  <Image
+                    source={{ uri: selectedBooking.prescription_url }}
+                    style={s.prescriptionThumbnail}
+                    contentFit="cover"
+                  />
+                  <View style={s.prescriptionPreviewOverlay}>
+                    <Icon name="search" size={16} color="#FFFFFF" />
+                    <Text style={s.prescriptionPreviewOverlayText}>Tap to View Full Document</Text>
+                  </View>
+                </Pressable>
               </Card>
             ) : null}
 
@@ -1532,6 +1568,35 @@ export default function Pro() {
           </View>
         </Animated.View>
       )}
+
+      {/* Full-screen Prescription Viewer Modal */}
+      <Modal
+        visible={!!viewingPrescriptionUrl}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setViewingPrescriptionUrl(null)}
+      >
+        <SafeAreaView style={s.prescriptionModalOverlay}>
+          <View style={s.prescriptionModalHeader}>
+            <Text style={s.prescriptionModalTitle}>Prescription Document</Text>
+            <Pressable
+              onPress={() => setViewingPrescriptionUrl(null)}
+              style={s.prescriptionModalCloseBtn}
+            >
+              <Icon name="x" size={24} color="#ffffff" />
+            </Pressable>
+          </View>
+          <View style={s.prescriptionModalBody}>
+            {viewingPrescriptionUrl ? (
+              <Image
+                source={{ uri: viewingPrescriptionUrl }}
+                style={s.prescriptionModalImage}
+                contentFit="contain"
+              />
+            ) : null}
+          </View>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -2570,5 +2635,99 @@ const s = StyleSheet.create({
     height: '100%',
     backgroundColor: '#1262E2',
     borderRadius: 1.5,
+  },
+  prescriptionCard: {
+    padding: space.md,
+    backgroundColor: '#FFFFFF',
+    borderRadius: radii.md,
+    marginBottom: space.md,
+  },
+  prescriptionCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+  },
+  prescriptionCardTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  prescriptionCardSub: {
+    fontSize: 12,
+    color: colors.muted,
+    marginTop: 2,
+  },
+  prescriptionBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+  },
+  prescriptionBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#059669',
+  },
+  prescriptionPreviewPressable: {
+    position: 'relative',
+    height: 160,
+    borderRadius: radii.sm,
+    overflow: 'hidden',
+    backgroundColor: '#F1F5F9',
+  },
+  prescriptionThumbnail: {
+    width: '100%',
+    height: '100%',
+  },
+  prescriptionPreviewOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 8,
+  },
+  prescriptionPreviewOverlayText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  prescriptionModalOverlay: {
+    flex: 1,
+    backgroundColor: '#0F172A',
+  },
+  prescriptionModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: space.lg,
+    paddingVertical: space.md,
+    backgroundColor: '#1E293B',
+  },
+  prescriptionModalTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  prescriptionModalCloseBtn: {
+    padding: 6,
+  },
+  prescriptionModalBody: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: space.md,
+  },
+  prescriptionModalImage: {
+    width: '100%',
+    height: '100%',
   },
 });
