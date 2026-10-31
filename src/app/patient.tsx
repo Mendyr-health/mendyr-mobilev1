@@ -42,6 +42,7 @@ import type { Address, Booking, BookingListItem, Service, User } from '@/lib/typ
 import { colors, radii, space } from '@/constants/theme';
 import { Icon, ProfessionIcon } from '@/components/icons';
 import { Avatar, Badge, type BadgeTone, BlinkingDot, Button, Card, Notice, Title, Body } from '@/components/ui';
+import { PatientNotificationBanner } from '@/components/patient-notification-banner';
 
 type Tab = 'home' | 'book' | 'bookings' | 'account';
 
@@ -724,6 +725,11 @@ export default function Patient() {
   return (
     <SafeAreaView style={s.root} edges={['top', 'bottom']}>
       <StatusBar style={showColdSplash ? 'light' : 'dark'} />
+      {/* Floating In-App Live Notification Banner for Nurse Acceptance & Cancellation */}
+      <PatientNotificationBanner
+        bookings={bookings.data}
+        onViewBooking={(bookingId) => handleSwitchTab('bookings', bookingId)}
+      />
       {/* Header bar */}
       <View style={s.header}>
         {tab !== 'home' ? (
