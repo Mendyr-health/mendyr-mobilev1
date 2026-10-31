@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  BackHandler,
   FlatList,
   Linking,
   Platform,
@@ -11,6 +12,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  ToastAndroid,
   View,
 } from 'react-native';
 import { Image } from 'expo-image';
@@ -226,6 +228,10 @@ export default function Patient() {
   const tabProgressAnim = useRef(new Animated.Value(0)).current;
   const transitionTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Tab navigation history stack (linked list)
+  const [tabHistory, setTabHistory] = useState<Tab[]>(['home']);
+  const lastBackPressRef = useRef<number>(0);
+
   // Cold start splash state (~0.25s blue screen)
   const [showColdSplash, setShowColdSplash] = useState(() => !hasColdSplashShown());
   const coldFadeAnim = useRef(new Animated.Value(1)).current;
@@ -254,7 +260,7 @@ export default function Patient() {
     };
   }, []);
 
-  const handleSwitchTab = useCallback(
+  const runTabTransition = useCallback(
     (
       targetTab: Tab,
       targetBookingId: string | null = null,
@@ -323,6 +329,27 @@ export default function Patient() {
       tabProgressAnim,
       tabPulseAnim,
     ],
+  );
+
+  const handleSwitchTab = useCallback(
+    (
+      targetTab: Tab,
+      targetBookingId: string | null = null,
+      targetService: Service | null = null,
+    ) => {
+      // Linked List navigation history (forward direction)
+      setTabHistory((prev) => {
+        if (targetTab === 'home') {
+          return ['home'];
+        }
+        // Remove prior occurrence to eliminate cycles
+        const filtered = prev.filter((t) => t !== targetTab);
+        return [...filtered, targetTab];
+      });
+
+      runTabTransition(targetTab, targetBookingId, targetService);
+    },
+    [runTabTransition],
   );
 
   const handlePickSoonest = () => {
@@ -622,30 +649,129 @@ export default function Patient() {
     (b) => !['completed', 'cancelled', 'failed'].includes(b.status),
   );
 
+  const handleGoBack = useCallback(() => {
+    // 1. Block while mid-animation
+    if (isTabTransitioning) return true;
+
+    // 2. Dismiss open cancellation modal
+    if (showCancelModal) {
+      setShowCancelModal(false);
+      return true;
+    }
+
+    // 3. Dismiss address form modal
+    if (showAddAddress) {
+      handleCancelAddressForm();
+      return true;
+    }
+
+    // 4. Dismiss open booking detail view
+    if (selectedBookingId) {
+      setSelectedBookingId(null);
+      return true;
+    }
+
+    // 5. Navigate backwards through linked list tab history
+    if (tabHistory.length > 1) {
+      const nextHistory = tabHistory.slice(0, -1);
+      const previousTab = nextHistory[nextHistory.length - 1] ?? 'home';
+      setTabHistory(nextHistory);
+      runTabTransition(previousTab);
+      return true;
+    }
+
+    // 6. If currently on a secondary tab but history had only 1 item
+    if (tab !== 'home') {
+      setTabHistory(['home']);
+      runTabTransition('home');
+      return true;
+    }
+
+    // 7. Root home screen exit handling (Double tap back to exit on Android)
+    if (Platform.OS === 'android') {
+      const now = Date.now();
+      if (lastBackPressRef.current && now - lastBackPressRef.current < 2000) {
+        BackHandler.exitApp();
+        return true;
+      }
+      lastBackPressRef.current = now;
+      ToastAndroid.show('Press back again to exit', ToastAndroid.SHORT);
+      return true;
+    }
+
+    return false;
+  }, [
+    isTabTransitioning,
+    showCancelModal,
+    showAddAddress,
+    selectedBookingId,
+    tabHistory,
+    tab,
+    runTabTransition,
+  ]);
+
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener(
+      'hardwareBackPress',
+      () => {
+        return handleGoBack();
+      },
+    );
+    return () => subscription.remove();
+  }, [handleGoBack]);
+
   return (
     <SafeAreaView style={s.root} edges={['top', 'bottom']}>
       <StatusBar style={showColdSplash ? 'light' : 'dark'} />
       {/* Header bar */}
       <View style={s.header}>
-        <View style={s.headerLeft}>
-          <Avatar name={user?.full_name ?? 'User'} size={38} />
-          <View>
-            <Text style={s.headerGreeting}>
-              Hello, {user?.full_name?.split(' ')[0] ?? 'there'}
-            </Text>
-            <Text style={s.headerSub}>What care do you need?</Text>
+        {tab !== 'home' ? (
+          <Pressable
+            onPress={handleGoBack}
+            style={({ pressed }) => [s.headerBackBtn, pressed && s.pressed]}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+          >
+            <View style={s.headerBackIconWrap}>
+              <Icon name="chevronLeft" size={20} color={colors.ink} strokeWidth={2.4} />
+            </View>
+            <View>
+              <Text style={s.headerGreeting}>
+                {tab === 'book'
+                  ? 'Book a Visit'
+                  : tab === 'bookings'
+                    ? 'Your Visits'
+                    : 'Account & Profile'}
+              </Text>
+              <Text style={s.headerSub}>
+                Back to {tabHistory.length > 1 ? (tabHistory[tabHistory.length - 2] === 'bookings' ? 'visits' : tabHistory[tabHistory.length - 2]) : 'home'}
+              </Text>
+            </View>
+          </Pressable>
+        ) : (
+          <View style={s.headerLeft}>
+            <Avatar name={user?.full_name ?? 'User'} size={38} />
+            <View>
+              <Text style={s.headerGreeting}>
+                Hello, {user?.full_name?.split(' ')[0] ?? 'there'}
+              </Text>
+              <Text style={s.headerSub}>What care do you need?</Text>
+            </View>
           </View>
-        </View>
+        )}
 
-        <Pressable
-          onPress={() => {
-            handleSwitchTab('book');
-          }}
-          style={({ pressed }) => [s.headerAction, pressed && s.pressed]}
-        >
-          <Icon name="plus" size={16} color="#FFFFFF" strokeWidth={2.4} />
-          <Text style={s.headerActionText}>Book</Text>
-        </Pressable>
+        {tab !== 'book' && (
+          <Pressable
+            onPress={() => {
+              handleSwitchTab('book');
+            }}
+            style={({ pressed }) => [s.headerAction, pressed && s.pressed]}
+          >
+            <Icon name="plus" size={16} color="#FFFFFF" strokeWidth={2.4} />
+            <Text style={s.headerActionText}>Book</Text>
+          </Pressable>
+        )}
       </View>
 
       {/* Main Tab Content */}
@@ -2049,6 +2175,20 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+  },
+  headerBackBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  headerBackIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: radii.pill,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   headerGreeting: {
     fontSize: 16,

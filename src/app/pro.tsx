@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  BackHandler,
   FlatList,
   Linking,
   Platform,
@@ -11,6 +12,7 @@ import {
   Switch,
   Text,
   TextInput,
+  ToastAndroid,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -71,6 +73,8 @@ export default function Pro() {
 
   const isVerified = profile.data?.verification_status === 'approved';
 
+
+
   // Check Web/PWA Notification Permission
   useEffect(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined' && 'Notification' in window) {
@@ -130,12 +134,12 @@ export default function Pro() {
 
   // Handle incoming notification banner click
   const handleViewNotificationRequest = (_request: BookingRequest) => {
-    setTab('requests');
+    handleSwitchTab('requests');
   };
 
   const handleViewNotificationBooking = (booking: ProBooking) => {
     setSelectedBooking(booking);
-    setTab('bookings');
+    handleSwitchTab('bookings');
   };
 
   // Dial patient phone
@@ -189,7 +193,7 @@ export default function Pro() {
       if (accepted) {
         setSelectedBooking(accepted);
       }
-      setTab('bookings');
+      handleSwitchTab('bookings');
     } catch (e) {
       setMsg(e instanceof Error ? e.message : 'Unable to accept request.');
     } finally {
@@ -284,6 +288,73 @@ export default function Pro() {
     return true;
   });
 
+  // Tab navigation history stack (linked list)
+  const [tabHistory, setTabHistory] = useState<Tab[]>(['home']);
+  const lastBackPressRef = useRef<number>(0);
+
+  const handleSwitchTab = useCallback((targetTab: Tab) => {
+    setTabHistory((prev) => {
+      if (targetTab === 'home') return ['home'];
+      const filtered = prev.filter((t) => t !== targetTab);
+      return [...filtered, targetTab];
+    });
+    setTab(targetTab);
+  }, []);
+
+  const handleGoBack = useCallback(() => {
+    // 1. Dismiss booking detail if viewing one
+    if (selectedBooking) {
+      setSelectedBooking(null);
+      return true;
+    }
+
+    // 2. Dismiss review detail modal if open
+    if (showReviewDetails) {
+      setShowReviewDetails(false);
+      return true;
+    }
+
+    // 3. Navigate backwards through linked list tab history
+    if (tabHistory.length > 1) {
+      const nextHistory = tabHistory.slice(0, -1);
+      const previousTab = nextHistory[nextHistory.length - 1] ?? 'home';
+      setTabHistory(nextHistory);
+      setTab(previousTab);
+      return true;
+    }
+
+    // 4. Fallback if on non-home tab
+    if (tab !== 'home') {
+      setTabHistory(['home']);
+      setTab('home');
+      return true;
+    }
+
+    // 5. At root home: Double tap back to exit on Android
+    if (Platform.OS === 'android') {
+      const now = Date.now();
+      if (lastBackPressRef.current && now - lastBackPressRef.current < 2000) {
+        BackHandler.exitApp();
+        return true;
+      }
+      lastBackPressRef.current = now;
+      ToastAndroid.show('Press back again to exit', ToastAndroid.SHORT);
+      return true;
+    }
+
+    return false;
+  }, [selectedBooking, showReviewDetails, tabHistory, tab]);
+
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener(
+      'hardwareBackPress',
+      () => {
+        return handleGoBack();
+      },
+    );
+    return () => subscription.remove();
+  }, [handleGoBack]);
+
   return (
     <SafeAreaView style={s.root} edges={['top', 'bottom']}>
       {/* Floating In-App Live Notification Banner for New Requests & Cancellations */}
@@ -296,17 +367,43 @@ export default function Pro() {
 
       {/* Header bar */}
       <View style={s.header}>
-        <View style={s.headerLeft}>
-          <Avatar name={user?.full_name ?? 'Pro'} size={38} />
-          <View>
-            <Text style={s.headerGreeting}>
-              {user?.full_name?.split(' ')[0] ?? 'Professional'}
-            </Text>
-            <Text style={s.headerSub}>
-              {profile.data?.professional_type?.replace(/_/g, ' ') ?? 'Healthcare Pro'}
-            </Text>
+        {tab !== 'home' ? (
+          <Pressable
+            onPress={handleGoBack}
+            style={({ pressed }) => [s.headerBackBtn, pressed && s.pressed]}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+          >
+            <View style={s.headerBackIconWrap}>
+              <Icon name="chevronLeft" size={20} color={colors.ink} strokeWidth={2.4} />
+            </View>
+            <View>
+              <Text style={s.headerGreeting}>
+                {tab === 'requests'
+                  ? 'Incoming Requests'
+                  : tab === 'bookings'
+                    ? 'Patient Visits'
+                    : 'Pro Profile'}
+              </Text>
+              <Text style={s.headerSub}>
+                Back to {tabHistory.length > 1 ? tabHistory[tabHistory.length - 2] : 'home'}
+              </Text>
+            </View>
+          </Pressable>
+        ) : (
+          <View style={s.headerLeft}>
+            <Avatar name={user?.full_name ?? 'Pro'} size={38} />
+            <View>
+              <Text style={s.headerGreeting}>
+                {user?.full_name?.split(' ')[0] ?? 'Professional'}
+              </Text>
+              <Text style={s.headerSub}>
+                {profile.data?.professional_type?.replace(/_/g, ' ') ?? 'Healthcare Pro'}
+              </Text>
+            </View>
           </View>
-        </View>
+        )}
 
         <Badge tone={isVerified ? 'green' : 'amber'}>
           {isVerified ? 'Verified Pro' : 'Under Review'}
@@ -746,7 +843,7 @@ export default function Pro() {
             {/* Requests CTA */}
             <Button
               title={`View Open Requests (${requests.data?.length ?? 0})`}
-              onPress={() => setTab('requests')}
+              onPress={() => handleSwitchTab('requests')}
               icon="arrowRight"
               iconRight
               size="lg"
@@ -1156,7 +1253,7 @@ export default function Pro() {
         <Pressable
           onPress={() => {
             setSelectedBooking(null);
-            setTab('home');
+            handleSwitchTab('home');
           }}
           style={s.tabButton}
           accessibilityRole="button"
@@ -1179,7 +1276,7 @@ export default function Pro() {
         <Pressable
           onPress={() => {
             setSelectedBooking(null);
-            setTab('requests');
+            handleSwitchTab('requests');
           }}
           style={s.tabButton}
           accessibilityRole="button"
@@ -1201,7 +1298,7 @@ export default function Pro() {
 
         <Pressable
           onPress={() => {
-            setTab('bookings');
+            handleSwitchTab('bookings');
           }}
           style={s.tabButton}
           accessibilityRole="button"
@@ -1224,7 +1321,7 @@ export default function Pro() {
         <Pressable
           onPress={() => {
             setSelectedBooking(null);
-            setTab('profile');
+            handleSwitchTab('profile');
           }}
           style={s.tabButton}
           accessibilityRole="button"
@@ -1270,6 +1367,20 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+  },
+  headerBackBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  headerBackIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: radii.pill,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   headerGreeting: {
     fontSize: 16,
