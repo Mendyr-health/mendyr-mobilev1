@@ -1,6 +1,7 @@
-import React, { type ReactNode } from 'react';
+import React, { useEffect, useRef, type ReactNode } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   Platform,
   Pressable,
   StyleSheet,
@@ -181,20 +182,111 @@ const BADGE_COLORS: Record<BadgeTone, { bg: string; text: string; border: string
   gray: { bg: '#F1F5F9', text: colors.muted, border: '#E2E8F0' },
 };
 
+export function BlinkingDot({
+  color = colors.warning,
+  size = 7,
+  style,
+}: {
+  color?: string;
+  size?: number;
+  style?: StyleProp<ViewStyle>;
+}) {
+  const pulseAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 750,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 0,
+          duration: 750,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulseAnim]);
+
+  const scale = pulseAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.85, 1.2],
+  });
+
+  const opacity = pulseAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.35, 1],
+  });
+
+  const ringScale = pulseAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 2.2],
+  });
+
+  const ringOpacity = pulseAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.6, 0],
+  });
+
+  return (
+    <View
+      style={[
+        {
+          width: size,
+          height: size,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        style,
+      ]}
+    >
+      <Animated.View
+        style={{
+          position: 'absolute',
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          backgroundColor: color,
+          opacity: ringOpacity,
+          transform: [{ scale: ringScale }],
+        }}
+      />
+      <Animated.View
+        style={{
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          backgroundColor: color,
+          opacity,
+          transform: [{ scale }],
+        }}
+      />
+    </View>
+  );
+}
+
 export function Badge({
   tone = 'gray',
   children,
   icon,
   style,
+  pulseDot,
 }: {
   tone?: BadgeTone;
   children: ReactNode;
   icon?: IconName;
   style?: StyleProp<ViewStyle>;
+  pulseDot?: boolean;
 }) {
   const c = BADGE_COLORS[tone];
+  const shouldPulse = pulseDot ?? (typeof children === 'string' && children.toLowerCase().includes('finding'));
   return (
     <View style={[styles.badge, { backgroundColor: c.bg, borderColor: c.border }, style]}>
+      {shouldPulse && <BlinkingDot color={c.text} size={7} />}
       {icon && <Icon name={icon} size={13} color={c.text} strokeWidth={2.4} />}
       <Text style={[styles.badgeText, { color: c.text }]}>{children}</Text>
     </View>

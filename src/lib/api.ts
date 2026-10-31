@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 
-const base = (process.env.EXPO_PUBLIC_API_URL ?? '').replace(/\/+$/, '');
+const base = (process.env.EXPO_PUBLIC_API_URL || 'https://mendyr-backend-v1.fastapicloud.dev').replace(/\/+$/, '');
 const ACCESS_KEY = 'mendyr.access-token';
 const REFRESH_KEY = 'mendyr.refresh-token';
 export class ApiError extends Error { constructor(message:string, public status:number, public code='http_error'){ super(message); } }

@@ -41,7 +41,7 @@ import { hasColdSplashShown, markColdSplashShown } from '@/lib/splash';
 import type { Address, Booking, BookingListItem, Service, User } from '@/lib/types';
 import { colors, radii, space } from '@/constants/theme';
 import { Icon, ProfessionIcon } from '@/components/icons';
-import { Avatar, Badge, type BadgeTone, Button, Card, Notice, Title, Body } from '@/components/ui';
+import { Avatar, Badge, type BadgeTone, BlinkingDot, Button, Card, Notice, Title, Body } from '@/components/ui';
 
 type Tab = 'home' | 'book' | 'bookings' | 'account';
 
@@ -808,6 +808,7 @@ export default function Patient() {
                     </View>
                     <Badge
                       tone={STATUS_TONES[bookingDetail.data.status] ?? 'blue'}
+                      pulseDot={bookingDetail.data.status === 'searching'}
                     >
                       {statusLabel(bookingDetail.data.status)}
                     </Badge>
@@ -860,7 +861,10 @@ export default function Patient() {
                   <Card style={s.searchingProCard}>
                     <Icon name="clock" size={24} color={colors.warning} />
                     <View style={s.searchingProTexts}>
-                      <Text style={s.searchingProTitle}>Finding your caregiver…</Text>
+                      <View style={s.searchingProTitleRow}>
+                        <BlinkingDot color={colors.warning} size={8} />
+                        <Text style={s.searchingProTitle}>Finding your caregiver…</Text>
+                      </View>
                       <Text style={s.searchingProDesc}>
                         A verified professional near your area is reviewing this booking. We will notify you once accepted.
                       </Text>
@@ -1001,7 +1005,10 @@ export default function Patient() {
                         <Text style={s.bookingServiceName}>
                           {b.service_name_snapshot}
                         </Text>
-                        <Badge tone={STATUS_TONES[b.status] ?? 'blue'}>
+                        <Badge
+                          tone={STATUS_TONES[b.status] ?? 'blue'}
+                          pulseDot={b.status === 'searching'}
+                        >
                           {statusLabel(b.status)}
                         </Badge>
                       </View>
@@ -1543,7 +1550,10 @@ export default function Patient() {
                         <Text style={s.bookingServiceName}>
                           {item.service_name_snapshot}
                         </Text>
-                        <Badge tone={STATUS_TONES[item.status] ?? 'gray'}>
+                        <Badge
+                          tone={STATUS_TONES[item.status] ?? 'gray'}
+                          pulseDot={item.status === 'searching'}
+                        >
                           {statusLabel(item.status)}
                         </Badge>
                       </View>
@@ -1574,7 +1584,10 @@ export default function Patient() {
                             </Text>
                           </View>
                         ) : (
-                          <Text style={s.findingProText}>Matching caregiver…</Text>
+                          <View style={s.matchingProRow}>
+                            <BlinkingDot color={colors.warning} size={7} />
+                            <Text style={s.findingProText}>Matching caregiver…</Text>
+                          </View>
                         )}
                       </View>
 
@@ -2443,6 +2456,11 @@ const s = StyleSheet.create({
     fontWeight: '600',
     color: colors.brand700,
   },
+  matchingProRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
   findingProText: {
     fontSize: 12,
     fontWeight: '600',
@@ -2875,6 +2893,11 @@ const s = StyleSheet.create({
   searchingProTexts: {
     flex: 1,
     gap: 2,
+  },
+  searchingProTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   searchingProTitle: {
     fontSize: 14,
