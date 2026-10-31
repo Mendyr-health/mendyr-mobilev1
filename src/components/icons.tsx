@@ -16,7 +16,9 @@ import {
   Info,
   List,
   LogOut,
+  Mail,
   MapPin,
+  Pencil,
   Phone,
   Plus,
   RefreshCw,
@@ -25,6 +27,7 @@ import {
   Sparkles,
   Star,
   Stethoscope,
+  Trash2,
   User,
   Users,
   X,
@@ -60,7 +63,10 @@ export type IconName =
   | 'rupee'
   | 'info'
   | 'refresh'
-  | 'list';
+  | 'list'
+  | 'mail'
+  | 'edit'
+  | 'trash';
 
 const ICON_MAP: Record<IconName, LucideIcon> = {
   heart: Heart,
@@ -90,6 +96,9 @@ const ICON_MAP: Record<IconName, LucideIcon> = {
   info: Info,
   refresh: RefreshCw,
   list: List,
+  mail: Mail,
+  edit: Pencil,
+  trash: Trash2,
 };
 
 interface IconProps {

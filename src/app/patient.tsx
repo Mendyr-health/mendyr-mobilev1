@@ -1,7 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   FlatList,
   Linking,
   Platform,
@@ -12,6 +13,8 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { Image } from 'expo-image';
+import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { router } from 'expo-router';
@@ -29,12 +32,32 @@ import {
   MARKET_TZ,
 } from '@/lib/format';
 import { getCurrentDeviceLocation } from '@/lib/location';
+import { hasColdSplashShown, markColdSplashShown } from '@/lib/splash';
 import type { Address, Booking, BookingListItem, Service } from '@/lib/types';
 import { colors, radii, space } from '@/constants/theme';
 import { Icon, ProfessionIcon } from '@/components/icons';
 import { Avatar, Badge, type BadgeTone, Button, Card, Notice, Title, Body } from '@/components/ui';
 
 type Tab = 'home' | 'book' | 'bookings' | 'account';
+
+const TAB_REASSURANCES: Record<Tab, { title: string; subtitle: string }> = {
+  home: {
+    title: "We are with you, don't worry",
+    subtitle: 'Dedicated healthcare specialists ready to support you at home.',
+  },
+  book: {
+    title: "We are with you, don't worry",
+    subtitle: 'Connecting you with verified doctors, nurses & caregivers.',
+  },
+  bookings: {
+    title: "We are with you, don't worry",
+    subtitle: 'Fetching your care visits and verified specialist updates.',
+  },
+  account: {
+    title: "We are with you, don't worry",
+    subtitle: 'Securing your healthcare profile and medical preferences.',
+  },
+};
 
 const STATUS_TONES: Record<string, BadgeTone> = {
   created: 'gray',
@@ -165,6 +188,113 @@ export default function Patient() {
     enabled: !!selectedBookingId,
     refetchInterval: 5000,
   });
+
+  // Tab transition state (< 0.5s calming medical screen)
+  const [transitionTargetTab, setTransitionTargetTab] = useState<Tab | null>(null);
+  const [isTabTransitioning, setIsTabTransitioning] = useState(false);
+  const tabTransitionFade = useRef(new Animated.Value(0)).current;
+  const tabPulseAnim = useRef(new Animated.Value(1)).current;
+  const tabProgressAnim = useRef(new Animated.Value(0)).current;
+  const transitionTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Cold start splash state (~0.25s blue screen)
+  const [showColdSplash, setShowColdSplash] = useState(() => !hasColdSplashShown());
+  const coldFadeAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    if (showColdSplash) {
+      markColdSplashShown();
+      const timer = setTimeout(() => {
+        Animated.timing(coldFadeAnim, {
+          toValue: 0,
+          duration: 160,
+          useNativeDriver: true,
+        }).start(() => {
+          setShowColdSplash(false);
+        });
+      }, 260); // 0.25s
+      return () => clearTimeout(timer);
+    }
+  }, [showColdSplash, coldFadeAnim]);
+
+  useEffect(() => {
+    return () => {
+      if (transitionTimerRef.current) {
+        clearTimeout(transitionTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleSwitchTab = useCallback(
+    (
+      targetTab: Tab,
+      targetBookingId: string | null = null,
+      targetService: Service | null = null,
+    ) => {
+      if (
+        tab === targetTab &&
+        selectedBookingId === targetBookingId &&
+        (!targetService || selectedService?.id === targetService?.id) &&
+        !isTabTransitioning
+      ) {
+        return;
+      }
+
+      if (transitionTimerRef.current) {
+        clearTimeout(transitionTimerRef.current);
+      }
+
+      setTransitionTargetTab(targetTab);
+      setIsTabTransitioning(true);
+
+      tabTransitionFade.setValue(1);
+      tabProgressAnim.setValue(0);
+      tabPulseAnim.setValue(1);
+
+      Animated.timing(tabProgressAnim, {
+        toValue: 1,
+        duration: 280,
+        useNativeDriver: false,
+      }).start();
+
+      Animated.sequence([
+        Animated.timing(tabPulseAnim, {
+          toValue: 1.15,
+          duration: 140,
+          useNativeDriver: true,
+        }),
+        Animated.timing(tabPulseAnim, {
+          toValue: 1,
+          duration: 140,
+          useNativeDriver: true,
+        }),
+      ]).start();
+
+      transitionTimerRef.current = setTimeout(() => {
+        setTab(targetTab);
+        setSelectedBookingId(targetBookingId);
+        if (targetService) setSelectedService(targetService);
+
+        Animated.timing(tabTransitionFade, {
+          toValue: 0,
+          duration: 90,
+          useNativeDriver: true,
+        }).start(() => {
+          setIsTabTransitioning(false);
+          setTransitionTargetTab(null);
+        });
+      }, 280);
+    },
+    [
+      tab,
+      selectedBookingId,
+      selectedService,
+      isTabTransitioning,
+      tabTransitionFade,
+      tabProgressAnim,
+      tabPulseAnim,
+    ],
+  );
 
   const handlePickSoonest = () => {
     const earliestDay = dates.find((d) => slotsFor(d.key, now).length > 0);
@@ -297,7 +427,7 @@ export default function Patient() {
         qc.invalidateQueries({ queryKey: ['bookings'] }),
         qc.invalidateQueries({ queryKey: ['pro-bookings'] }),
       ]);
-      setTab('bookings');
+      handleSwitchTab('bookings');
       setSelectedService(null);
       setPickedTime(null);
       setNotes('');
@@ -325,6 +455,7 @@ export default function Patient() {
 
   return (
     <SafeAreaView style={s.root} edges={['top', 'bottom']}>
+      <StatusBar style={showColdSplash ? 'light' : 'dark'} />
       {/* Header bar */}
       <View style={s.header}>
         <View style={s.headerLeft}>
@@ -339,8 +470,7 @@ export default function Patient() {
 
         <Pressable
           onPress={() => {
-            setSelectedBookingId(null);
-            setTab('book');
+            handleSwitchTab('book');
           }}
           style={({ pressed }) => [s.headerAction, pressed && s.pressed]}
         >
@@ -557,7 +687,7 @@ export default function Patient() {
               <View style={s.section}>
                 <View style={s.sectionHeader}>
                   <Text style={s.sectionTitle}>Upcoming visits</Text>
-                  <Pressable onPress={() => setTab('bookings')}>
+                  <Pressable onPress={() => handleSwitchTab('bookings')}>
                     <Text style={s.sectionLink}>View all</Text>
                   </Pressable>
                 </View>
@@ -566,8 +696,7 @@ export default function Patient() {
                   <Pressable
                     key={b.id}
                     onPress={() => {
-                      setSelectedBookingId(b.id);
-                      setTab('bookings');
+                      handleSwitchTab('bookings', b.id);
                     }}
                     style={({ pressed }) => [s.bookingTouch, pressed && s.pressed]}
                   >
@@ -606,7 +735,7 @@ export default function Patient() {
               </Text>
               <Button
                 title="Book a home visit"
-                onPress={() => setTab('book')}
+                onPress={() => handleSwitchTab('book')}
                 icon="calendar"
                 style={s.heroBtn}
               />
@@ -623,8 +752,7 @@ export default function Patient() {
                     <Pressable
                       key={srv.id}
                       onPress={() => {
-                        setSelectedService(srv);
-                        setTab('book');
+                        handleSwitchTab('book', null, srv);
                       }}
                       style={({ pressed }) => [
                         s.serviceTile,
@@ -1322,8 +1450,7 @@ export default function Patient() {
       <View style={s.bottomTabBar}>
         <Pressable
           onPress={() => {
-            setSelectedBookingId(null);
-            setTab('home');
+            handleSwitchTab('home');
           }}
           style={s.tabButton}
           accessibilityRole="button"
@@ -1331,12 +1458,16 @@ export default function Patient() {
           <Icon
             name="heart"
             size={20}
-            color={tab === 'home' && !selectedBookingId ? colors.brand600 : colors.muted}
+            color={
+              (transitionTargetTab ?? tab) === 'home' && (!selectedBookingId || isTabTransitioning)
+                ? colors.brand600
+                : colors.muted
+            }
           />
           <Text
             style={[
               s.tabLabel,
-              tab === 'home' && !selectedBookingId && s.tabLabelActive,
+              (transitionTargetTab ?? tab) === 'home' && (!selectedBookingId || isTabTransitioning) && s.tabLabelActive,
             ]}
           >
             Home
@@ -1345,8 +1476,7 @@ export default function Patient() {
 
         <Pressable
           onPress={() => {
-            setSelectedBookingId(null);
-            setTab('book');
+            handleSwitchTab('book');
           }}
           style={s.tabButton}
           accessibilityRole="button"
@@ -1354,12 +1484,16 @@ export default function Patient() {
           <Icon
             name="calendar"
             size={20}
-            color={tab === 'book' && !selectedBookingId ? colors.brand600 : colors.muted}
+            color={
+              (transitionTargetTab ?? tab) === 'book' && (!selectedBookingId || isTabTransitioning)
+                ? colors.brand600
+                : colors.muted
+            }
           />
           <Text
             style={[
               s.tabLabel,
-              tab === 'book' && !selectedBookingId && s.tabLabelActive,
+              (transitionTargetTab ?? tab) === 'book' && (!selectedBookingId || isTabTransitioning) && s.tabLabelActive,
             ]}
           >
             Book
@@ -1368,7 +1502,7 @@ export default function Patient() {
 
         <Pressable
           onPress={() => {
-            setTab('bookings');
+            handleSwitchTab('bookings');
           }}
           style={s.tabButton}
           accessibilityRole="button"
@@ -1376,12 +1510,17 @@ export default function Patient() {
           <Icon
             name="list"
             size={20}
-            color={tab === 'bookings' || selectedBookingId ? colors.brand600 : colors.muted}
+            color={
+              (transitionTargetTab ?? tab) === 'bookings' || (selectedBookingId && !isTabTransitioning)
+                ? colors.brand600
+                : colors.muted
+            }
           />
           <Text
             style={[
               s.tabLabel,
-              (tab === 'bookings' || selectedBookingId) && s.tabLabelActive,
+              ((transitionTargetTab ?? tab) === 'bookings' || (selectedBookingId && !isTabTransitioning)) &&
+                s.tabLabelActive,
             ]}
           >
             Visits
@@ -1390,8 +1529,7 @@ export default function Patient() {
 
         <Pressable
           onPress={() => {
-            setSelectedBookingId(null);
-            setTab('account');
+            handleSwitchTab('account');
           }}
           style={s.tabButton}
           accessibilityRole="button"
@@ -1399,18 +1537,113 @@ export default function Patient() {
           <Icon
             name="user"
             size={20}
-            color={tab === 'account' && !selectedBookingId ? colors.brand600 : colors.muted}
+            color={
+              (transitionTargetTab ?? tab) === 'account' && (!selectedBookingId || isTabTransitioning)
+                ? colors.brand600
+                : colors.muted
+            }
           />
           <Text
             style={[
               s.tabLabel,
-              tab === 'account' && !selectedBookingId && s.tabLabelActive,
+              (transitionTargetTab ?? tab) === 'account' && (!selectedBookingId || isTabTransitioning) &&
+                s.tabLabelActive,
             ]}
           >
             Account
           </Text>
         </Pressable>
       </View>
+
+      {/* White Medical Tab Transition Overlay (<0.5s calming screen) */}
+      {isTabTransitioning && (
+        <Animated.View
+          style={[
+            s.tabTransitionOverlay,
+            { opacity: tabTransitionFade },
+          ]}
+          pointerEvents="auto"
+        >
+          <View style={s.medicalTransitionCard}>
+            {/* Pulsing Medical Heartbeat Ring */}
+            <Animated.View
+              style={[
+                s.pulseIconWrap,
+                { transform: [{ scale: tabPulseAnim }] },
+              ]}
+            >
+              <View style={s.pulseIconInner}>
+                <Icon name="heart" size={24} color="#FFFFFF" strokeWidth={2.4} />
+              </View>
+            </Animated.View>
+
+            {/* Reassuring Medical Title */}
+            <Text style={s.reassureTitle}>{"We are with you, don't worry"}</Text>
+
+            {/* Contextual Healthcare Subtitle */}
+            <Text style={s.reassureSub}>
+              {TAB_REASSURANCES[transitionTargetTab ?? tab].subtitle}
+            </Text>
+
+            {/* Medical Trust Widgets */}
+            <View style={s.trustRow}>
+              <View style={s.trustBadge}>
+                <Icon name="shieldCheck" size={15} color="#10B981" strokeWidth={2.2} />
+                <Text style={s.trustBadgeText}>Verified Caregivers</Text>
+              </View>
+              <View style={s.trustDivider} />
+              <View style={s.trustBadge}>
+                <Icon name="activity" size={15} color="#1262E2" strokeWidth={2.2} />
+                <Text style={s.trustBadgeText}>Clinical Support</Text>
+              </View>
+            </View>
+
+            {/* Smooth Progress Bar */}
+            <View style={s.progressBarTrack}>
+              <Animated.View
+                style={[
+                  s.progressBarFill,
+                  {
+                    width: tabProgressAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: ['0%', '100%'],
+                    }),
+                  },
+                ]}
+              />
+            </View>
+          </View>
+        </Animated.View>
+      )}
+
+      {/* Cold Start 0.25s Blue Screen of Mendyr */}
+      {showColdSplash && (
+        <Animated.View
+          style={[
+            s.coldSplashOverlay,
+            { opacity: coldFadeAnim },
+          ]}
+          pointerEvents="auto"
+        >
+          <View style={s.coldSplashCenter}>
+            <View style={s.coldSplashLogoWrap}>
+              <Image
+                source={require('@/assets/branding/mendyr.png')}
+                style={s.coldSplashLogo}
+                contentFit="contain"
+              />
+            </View>
+            <Text style={s.coldSplashTitle}>Mendyr</Text>
+            <Text style={s.coldSplashTagline}>Healthcare delivered at home</Text>
+            <ActivityIndicator color="#FFFFFF" size="small" style={s.coldSplashSpinner} />
+          </View>
+          <View style={s.coldSplashFooter}>
+            <Text style={s.coldSplashFooterText}>
+              Certified Caregivers · Doorstep Support
+            </Text>
+          </View>
+        </Animated.View>
+      )}
     </SafeAreaView>
   );
 }
@@ -2383,5 +2616,179 @@ const s = StyleSheet.create({
     fontSize: 16,
     fontWeight: '800',
     color: colors.brand600,
+  },
+  tabTransitionOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 56,
+    backgroundColor: '#FFFFFF',
+    zIndex: 90,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: space.lg,
+  },
+  medicalTransitionCard: {
+    width: '100%',
+    maxWidth: 340,
+    backgroundColor: '#FFFFFF',
+    borderRadius: radii.xl,
+    paddingVertical: space.xl,
+    paddingHorizontal: space.lg,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    ...Platform.select({
+      web: {
+        boxShadow: '0 12px 32px rgba(18, 98, 226, 0.08)',
+      },
+      default: {
+        shadowColor: '#1262E2',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.08,
+        shadowRadius: 16,
+        elevation: 4,
+      },
+    }),
+  },
+  pulseIconWrap: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1.5,
+    borderColor: '#BFDBFE',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: space.md,
+  },
+  pulseIconInner: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: '#1262E2',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reassureTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.ink,
+    textAlign: 'center',
+    letterSpacing: -0.3,
+  },
+  reassureSub: {
+    fontSize: 13,
+    fontWeight: '400',
+    color: colors.muted,
+    textAlign: 'center',
+    marginTop: 6,
+    lineHeight: 18,
+    paddingHorizontal: space.xs,
+  },
+  trustRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    marginTop: 18,
+    gap: 10,
+  },
+  trustBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  trustBadgeText: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: colors.ink,
+  },
+  trustDivider: {
+    width: 1,
+    height: 14,
+    backgroundColor: '#E2E8F0',
+  },
+  progressBarTrack: {
+    width: '100%',
+    height: 3,
+    backgroundColor: '#EDF2F7',
+    borderRadius: 1.5,
+    overflow: 'hidden',
+    marginTop: 18,
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: '#1262E2',
+    borderRadius: 1.5,
+  },
+  coldSplashOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#1262E2',
+    zIndex: 100,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  coldSplashCenter: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  coldSplashLogoWrap: {
+    width: 88,
+    height: 88,
+    borderRadius: 24,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+    ...Platform.select({
+      web: {
+        boxShadow: '0 12px 32px rgba(0, 0, 0, 0.18)',
+      },
+      default: {
+        shadowColor: '#000000',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.18,
+        shadowRadius: 12,
+        elevation: 6,
+      },
+    }),
+  },
+  coldSplashLogo: {
+    width: 60,
+    height: 60,
+  },
+  coldSplashTitle: {
+    fontSize: 34,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: -0.5,
+  },
+  coldSplashTagline: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: 'rgba(255, 255, 255, 0.85)',
+    marginTop: 6,
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  coldSplashSpinner: {
+    marginTop: 8,
+  },
+  coldSplashFooter: {
+    position: 'absolute',
+    bottom: 36,
+  },
+  coldSplashFooterText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: 'rgba(255, 255, 255, 0.7)',
+    textAlign: 'center',
   },
 });
