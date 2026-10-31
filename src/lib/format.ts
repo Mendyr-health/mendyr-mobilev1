@@ -65,3 +65,21 @@ export function slotLabel(slot: string): string {
   const period = h < 12 ? 'am' : 'pm';
   return `${hour}:${String(m).padStart(2, '0')} ${period}`;
 }
+
+/** 10-digit Indian mobile -> "+91XXXXXXXXXX"; anything with a + is kept as typed. */
+export function toE164India(phone: string): string {
+  const digits = phone.replace(/\D/g, '');
+  if (phone.trim().startsWith('+')) return `+${digits}`;
+  if (digits.length === 12 && digits.startsWith('91')) return `+${digits}`;
+  return `+91${digits.slice(-10)}`;
+}
+
+export function isValidIndianMobile(phone: string): boolean {
+  const digits = phone.replace(/\D/g, '');
+  return /^[6-9]\d{9}$/.test(digits.length === 12 ? digits.slice(2) : digits);
+}
+
+export function displayPhone(e164: string): string {
+  const match = /^\+91(\d{5})(\d{5})$/.exec(e164);
+  return match ? `+91 ${match[1]} ${match[2]}` : e164;
+}

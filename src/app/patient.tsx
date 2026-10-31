@@ -30,10 +30,13 @@ import {
   istIso,
   slotLabel,
   MARKET_TZ,
+  toE164India,
+  isValidIndianMobile,
+  displayPhone,
 } from '@/lib/format';
 import { getCurrentDeviceLocation } from '@/lib/location';
 import { hasColdSplashShown, markColdSplashShown } from '@/lib/splash';
-import type { Address, Booking, BookingListItem, Service } from '@/lib/types';
+import type { Address, Booking, BookingListItem, Service, User } from '@/lib/types';
 import { colors, radii, space } from '@/constants/theme';
 import { Icon, ProfessionIcon } from '@/components/icons';
 import { Avatar, Badge, type BadgeTone, Button, Card, Notice, Title, Body } from '@/components/ui';
@@ -106,7 +109,7 @@ function buildDates(now: Date) {
 }
 
 export default function Patient() {
-  const { user, logout } = useAuth();
+  const { user, setUser, logout } = useAuth();
   const [tab, setTab] = useState<Tab>('home');
   const qc = useQueryClient();
 
@@ -154,7 +157,27 @@ export default function Patient() {
   // Patient clinical notes
   const [notes, setNotes] = useState('');
 
-  // Address creation form state
+  // Profile update state
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [profileName, setProfileName] = useState(user?.full_name ?? '');
+  const [profilePhone, setProfilePhone] = useState(
+    user?.phone_number ? user.phone_number.replace(/^\+91/, '') : '',
+  );
+  const [profileEmail, setProfileEmail] = useState(user?.email ?? '');
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [profileMessage, setProfileMessage] = useState<string | null>(null);
+
+  // Sync profile fields when user changes
+  useEffect(() => {
+    if (user && !isEditingProfile) {
+      setProfileName(user.full_name ?? '');
+      setProfilePhone(user.phone_number ? user.phone_number.replace(/^\+91/, '') : '');
+      setProfileEmail(user.email ?? '');
+    }
+  }, [user, isEditingProfile]);
+
+  // Address creation and edit state
+  const [editingAddressId, setEditingAddressId] = useState<string | null>(null);
   const [showAddAddress, setShowAddAddress] = useState(false);
   const [newAddressLabel, setNewAddressLabel] = useState('Home');
   const [newAddressLine1, setNewAddressLine1] = useState('');
@@ -163,8 +186,10 @@ export default function Patient() {
   const [newAddressCity, setNewAddressCity] = useState('Bengaluru');
   const [newAddressState, setNewAddressState] = useState('Karnataka');
   const [newAddressPincode, setNewAddressPincode] = useState('');
+  const [newAddressIsDefault, setNewAddressIsDefault] = useState(false);
   const [savingAddress, setSavingAddress] = useState(false);
   const [locatingAddress, setLocatingAddress] = useState(false);
+  const [addressMessage, setAddressMessage] = useState<string | null>(null);
 
   // Cancellation state
   const CANCEL_REASONS = [
@@ -307,6 +332,119 @@ export default function Patient() {
     }
   };
 
+  const handleOpenEditProfile = () => {
+    setProfileName(user?.full_name ?? '');
+    setProfilePhone(user?.phone_number ? user.phone_number.replace(/^\+91/, '') : '');
+    setProfileEmail(user?.email ?? '');
+    setProfileMessage(null);
+    setIsEditingProfile(true);
+  };
+
+  async function handleSaveProfile() {
+    if (profileName.trim().length < 2) {
+      Alert.alert('Full name required', 'Please enter your full name (at least 2 characters).');
+      return;
+    }
+    if (!isValidIndianMobile(profilePhone)) {
+      Alert.alert('Invalid phone number', 'Please enter a valid 10-digit Indian mobile number.');
+      return;
+    }
+    if (profileEmail.trim() && !/^\S+@\S+\.\S+$/.test(profileEmail.trim())) {
+      Alert.alert('Invalid email', 'Please enter a valid email address.');
+      return;
+    }
+
+    setSavingProfile(true);
+    setProfileMessage(null);
+    try {
+      const updated = await api<User>('/users/me', {
+        method: 'PATCH',
+        body: {
+          full_name: profileName.trim(),
+          phone_number: toE164India(profilePhone),
+          email: profileEmail.trim() || null,
+        },
+      });
+      setUser(updated);
+      setIsEditingProfile(false);
+      setProfileMessage('Profile details updated successfully.');
+      setTimeout(() => setProfileMessage(null), 4000);
+    } catch (e) {
+      Alert.alert('Update failed', e instanceof Error ? e.message : 'Could not update profile.');
+    } finally {
+      setSavingProfile(false);
+    }
+  }
+
+  function handleStartAddAddress() {
+    setEditingAddressId(null);
+    setNewAddressLabel('Home');
+    setNewAddressLine1('');
+    setNewAddressLine2('');
+    setNewAddressLandmark('');
+    setNewAddressCity('Bengaluru');
+    setNewAddressState('Karnataka');
+    setNewAddressPincode('');
+    setNewAddressIsDefault((addresses.data ?? []).length === 0);
+    setShowAddAddress(true);
+  }
+
+  function handleStartEditAddress(a: Address) {
+    setEditingAddressId(a.id);
+    setNewAddressLabel(a.label || 'Home');
+    setNewAddressLine1(a.line1 || '');
+    setNewAddressLine2(a.line2 || '');
+    setNewAddressLandmark(a.landmark || '');
+    setNewAddressCity(a.city || 'Bengaluru');
+    setNewAddressState(a.state || 'Karnataka');
+    setNewAddressPincode(a.pincode || '');
+    setNewAddressIsDefault(a.is_default);
+    setShowAddAddress(true);
+  }
+
+  function handleCancelAddressForm() {
+    setShowAddAddress(false);
+    setEditingAddressId(null);
+  }
+
+  async function handleSetDefaultAddress(a: Address) {
+    try {
+      await api(`/addresses/${a.id}`, {
+        method: 'PATCH',
+        body: { is_default: true },
+      });
+      await qc.invalidateQueries({ queryKey: ['addresses'] });
+      setAddressMessage(`"${a.label}" set as default address.`);
+      setTimeout(() => setAddressMessage(null), 3000);
+    } catch (e) {
+      Alert.alert('Error', e instanceof Error ? e.message : 'Could not set default address.');
+    }
+  }
+
+  function handleDeleteAddress(a: Address) {
+    Alert.alert(
+      'Delete Address',
+      `Are you sure you want to delete the "${a.label}" address?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await api(`/addresses/${a.id}`, { method: 'DELETE' });
+              await qc.invalidateQueries({ queryKey: ['addresses'] });
+              setAddressMessage('Address deleted.');
+              setTimeout(() => setAddressMessage(null), 3000);
+            } catch (e) {
+              Alert.alert('Error', e instanceof Error ? e.message : 'Could not delete address.');
+            }
+          },
+        },
+      ],
+    );
+  }
+
   async function handleUseCurrentLocation() {
     setLocatingAddress(true);
     try {
@@ -332,31 +470,58 @@ export default function Patient() {
       return;
     }
     setSavingAddress(true);
+    setAddressMessage(null);
     try {
-      const loc = await getCurrentDeviceLocation();
-      const saved = await api<Address>('/addresses', {
-        method: 'POST',
-        body: {
-          label: newAddressLabel,
-          line1: newAddressLine1.trim(),
-          line2: newAddressLine2.trim() || null,
-          landmark: newAddressLandmark.trim() || null,
-          city: newAddressCity.trim(),
-          state: newAddressState.trim(),
-          pincode: newAddressPincode.trim(),
-          latitude: loc.latitude,
-          longitude: loc.longitude,
-          is_default: (addresses.data ?? []).length === 0,
-        },
-      });
+      let loc = { latitude: 12.9716, longitude: 77.5946 };
+      try {
+        loc = await getCurrentDeviceLocation();
+      } catch {
+        // Fallback default coordinates
+      }
+
+      if (editingAddressId) {
+        await api<Address>(`/addresses/${editingAddressId}`, {
+          method: 'PATCH',
+          body: {
+            label: newAddressLabel.trim(),
+            line1: newAddressLine1.trim(),
+            line2: newAddressLine2.trim() || null,
+            landmark: newAddressLandmark.trim() || null,
+            city: newAddressCity.trim(),
+            state: newAddressState.trim(),
+            pincode: newAddressPincode.trim(),
+            is_default: newAddressIsDefault,
+            location: { latitude: loc.latitude, longitude: loc.longitude },
+          },
+        });
+        setAddressMessage('Address updated successfully.');
+      } else {
+        const saved = await api<Address>('/addresses', {
+          method: 'POST',
+          body: {
+            label: newAddressLabel.trim(),
+            line1: newAddressLine1.trim(),
+            line2: newAddressLine2.trim() || null,
+            landmark: newAddressLandmark.trim() || null,
+            city: newAddressCity.trim(),
+            state: newAddressState.trim(),
+            pincode: newAddressPincode.trim(),
+            location: { latitude: loc.latitude, longitude: loc.longitude },
+            is_default: newAddressIsDefault || (addresses.data ?? []).length === 0,
+          },
+        });
+        setPickedAddressId(saved.id);
+        setAddressMessage('New address saved successfully.');
+      }
+
       await qc.invalidateQueries({ queryKey: ['addresses'] });
-      setPickedAddressId(saved.id);
       setShowAddAddress(false);
+      setEditingAddressId(null);
       setNewAddressLine1('');
       setNewAddressLine2('');
       setNewAddressLandmark('');
       setNewAddressPincode('');
-      Alert.alert('Address Saved', 'Your address has been saved.');
+      setTimeout(() => setAddressMessage(null), 3000);
     } catch (e) {
       Alert.alert('Save failed', e instanceof Error ? e.message : 'Could not save address.');
     } finally {
@@ -1051,12 +1216,14 @@ export default function Patient() {
                 title={addresses.data?.length ? '+ Add another address' : '+ Add your home address'}
                 variant="outline"
                 icon="plus"
-                onPress={() => setShowAddAddress(true)}
+                onPress={handleStartAddAddress}
                 style={s.addAddressBtn}
               />
             ) : (
               <Card style={s.newAddressCard}>
-                <Text style={s.newAddressTitle}>Add New Home Address</Text>
+                <Text style={s.newAddressTitle}>
+                  {editingAddressId ? 'Edit Address' : 'Add New Home Address'}
+                </Text>
 
                 <Pressable
                   onPress={handleUseCurrentLocation}
@@ -1133,7 +1300,7 @@ export default function Patient() {
 
                 <View style={s.addressActionsRow}>
                   <Button
-                    title="Save address"
+                    title={editingAddressId ? 'Update address' : 'Save address'}
                     onPress={handleSaveNewAddress}
                     loading={savingAddress}
                     icon="check"
@@ -1143,7 +1310,7 @@ export default function Patient() {
                     <Button
                       title="Cancel"
                       variant="ghost"
-                      onPress={() => setShowAddAddress(false)}
+                      onPress={handleCancelAddressForm}
                     />
                   )}
                 </View>
@@ -1296,51 +1463,161 @@ export default function Patient() {
           >
             <Title>Account</Title>
 
-            {/* Profile Summary Card */}
-            <Card style={s.profileCard}>
-              <Avatar name={user?.full_name ?? 'User'} size={52} />
-              <View style={s.profileDetails}>
-                <Text style={s.profileName}>{user?.full_name}</Text>
-                <Text style={s.profileEmail}>{user?.email}</Text>
-                <Text style={s.profilePhone}>{user?.phone_number}</Text>
+            {/* Profile Update Feedback */}
+            {profileMessage && (
+              <View style={s.accountNotice}>
+                <Notice tone="success">
+                  {profileMessage}
+                </Notice>
               </View>
-            </Card>
-
-            {/* Saved Addresses */}
-            <Text style={s.fieldHeading}>Saved addresses</Text>
-            {addresses.data && addresses.data.length > 0 ? (
-              addresses.data.map((a) => (
-                <Card key={a.id} style={s.addressCard}>
-                  <View style={s.addressRow}>
-                    <Icon name="pin" size={18} color={colors.brand600} />
-                    <View style={s.addressTexts}>
-                      <View style={s.addressTitleRow}>
-                        <Text style={s.addressLabel}>{a.label}</Text>
-                        {a.is_default && <Badge tone="gray">Default</Badge>}
-                      </View>
-                      <Text style={s.addressDetails}>{addressLine(a)}</Text>
-                    </View>
-                  </View>
-                </Card>
-              ))
-            ) : (
-              <Notice tone="info">
-                No addresses saved yet. Add your home address below.
-              </Notice>
             )}
 
-            {!showAddAddress ? (
-              <Button
-                title="+ Add new home address"
-                variant="outline"
-                icon="plus"
-                onPress={() => setShowAddAddress(true)}
-                style={s.addAddressBtn}
-              />
-            ) : (
-              <Card style={s.newAddressCard}>
-                <Text style={s.newAddressTitle}>Add New Home Address</Text>
+            {/* User Profile Details Card (View Mode) */}
+            {!isEditingProfile ? (
+              <Card style={s.profileCard}>
+                <View style={s.profileTopRow}>
+                  <Avatar name={user?.full_name ?? 'User'} size={54} />
+                  <View style={s.profileDetails}>
+                    <Text style={s.profileName}>{user?.full_name || 'Mendyr Patient'}</Text>
+                    <Badge tone="blue" style={s.roleBadge}>Patient Account</Badge>
+                  </View>
+                  <Pressable
+                    onPress={handleOpenEditProfile}
+                    style={({ pressed }) => [s.editProfileIconBtn, pressed && s.pressed]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Edit profile"
+                  >
+                    <Icon name="edit" size={15} color={colors.brand600} />
+                    <Text style={s.editProfileIconBtnText}>Edit</Text>
+                  </Pressable>
+                </View>
 
+                <View style={s.profileDivider} />
+
+                <View style={s.profileInfoStack}>
+                  <View style={s.profileInfoRow}>
+                    <Icon name="phone" size={16} color={colors.muted} />
+                    <Text style={s.profileInfoLabel}>Mobile:</Text>
+                    <Text style={s.profileInfoValue}>
+                      {displayPhone(user?.phone_number ?? '')}
+                    </Text>
+                  </View>
+
+                  <View style={s.profileInfoRow}>
+                    <Icon name="mail" size={16} color={colors.muted} />
+                    <Text style={s.profileInfoLabel}>Email:</Text>
+                    <Text style={s.profileInfoValue}>
+                      {user?.email || 'No email provided'}
+                    </Text>
+                  </View>
+                </View>
+              </Card>
+            ) : (
+              /* User Profile Details Form (Edit Mode) */
+              <Card style={s.editProfileCard}>
+                <View style={s.editProfileHeader}>
+                  <Text style={s.editProfileTitle}>Edit Profile Details</Text>
+                  <Text style={s.editProfileSub}>
+                    Update your full name, mobile number, and email address
+                  </Text>
+                </View>
+
+                <View style={s.inputGroup}>
+                  <Text style={s.inputLabel}>Full Name *</Text>
+                  <TextInput
+                    style={s.textInput}
+                    value={profileName}
+                    onChangeText={setProfileName}
+                    placeholder="Enter full name"
+                    autoCapitalize="words"
+                  />
+                </View>
+
+                <View style={s.inputGroup}>
+                  <Text style={s.inputLabel}>Mobile Number *</Text>
+                  <View style={s.phoneInputWrap}>
+                    <View style={s.phonePrefixBadge}>
+                      <Text style={s.phonePrefixText}>+91</Text>
+                    </View>
+                    <TextInput
+                      style={s.phoneTextInput}
+                      value={profilePhone}
+                      onChangeText={(t) => setProfilePhone(t.replace(/\D/g, ''))}
+                      placeholder="10-digit mobile number"
+                      keyboardType="phone-pad"
+                      maxLength={10}
+                    />
+                  </View>
+                </View>
+
+                <View style={s.inputGroup}>
+                  <Text style={s.inputLabel}>Email Address</Text>
+                  <TextInput
+                    style={s.textInput}
+                    value={profileEmail}
+                    onChangeText={setProfileEmail}
+                    placeholder="name@example.com"
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                  />
+                </View>
+
+                <View style={s.profileActionsRow}>
+                  <Button
+                    title="Save changes"
+                    onPress={handleSaveProfile}
+                    loading={savingProfile}
+                    icon="check"
+                    style={{ flex: 1 }}
+                  />
+                  <Button
+                    title="Cancel"
+                    variant="ghost"
+                    onPress={() => setIsEditingProfile(false)}
+                    disabled={savingProfile}
+                  />
+                </View>
+              </Card>
+            )}
+
+            {/* Saved Addresses Section Header */}
+            <View style={s.addressSectionHeader}>
+              <Text style={s.fieldHeading}>Saved addresses</Text>
+              {!showAddAddress && (
+                <Button
+                  title="+ Add address"
+                  variant="outline"
+                  size="sm"
+                  onPress={handleStartAddAddress}
+                />
+              )}
+            </View>
+
+            {/* Address Notice */}
+            {addressMessage && (
+              <View style={s.accountNotice}>
+                <Notice tone="info">
+                  {addressMessage}
+                </Notice>
+              </View>
+            )}
+
+            {/* Add or Edit Address Form */}
+            {showAddAddress ? (
+              <Card style={s.newAddressCard}>
+                <View style={s.newAddressHeaderRow}>
+                  <Text style={s.newAddressTitle}>
+                    {editingAddressId ? 'Edit Saved Address' : 'Add New Home Address'}
+                  </Text>
+                  <Pressable
+                    onPress={handleCancelAddressForm}
+                    hitSlop={8}
+                  >
+                    <Icon name="x" size={18} color={colors.muted} />
+                  </Pressable>
+                </View>
+
+                {/* GPS Autofill */}
                 <Pressable
                   onPress={handleUseCurrentLocation}
                   style={({ pressed }) => [s.gpsLocateBtn, pressed && s.pressed]}
@@ -1351,14 +1628,32 @@ export default function Patient() {
                   </Text>
                 </Pressable>
 
+                {/* Address Label Chips */}
                 <View style={s.inputGroup}>
-                  <Text style={s.inputLabel}>Label (Home, Work, Parents)</Text>
-                  <TextInput
-                    style={s.textInput}
-                    value={newAddressLabel}
-                    onChangeText={setNewAddressLabel}
-                    placeholder="Home"
-                  />
+                  <Text style={s.inputLabel}>Address Label</Text>
+                  <View style={s.addressLabelChipsRow}>
+                    {['Home', 'Work', 'Parents', 'Other'].map((lbl) => (
+                      <Pressable
+                        key={lbl}
+                        onPress={() => setNewAddressLabel(lbl)}
+                        style={[
+                          s.addressLabelChip,
+                          newAddressLabel.toLowerCase() === lbl.toLowerCase() &&
+                            s.addressLabelChipActive,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            s.addressLabelChipText,
+                            newAddressLabel.toLowerCase() === lbl.toLowerCase() &&
+                              s.addressLabelChipTextActive,
+                          ]}
+                        >
+                          {lbl}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
                 </View>
 
                 <View style={s.inputGroup}>
@@ -1414,9 +1709,27 @@ export default function Patient() {
                   </View>
                 </View>
 
+                {/* Default Address Checkbox */}
+                <Pressable
+                  onPress={() => setNewAddressIsDefault(!newAddressIsDefault)}
+                  style={s.defaultCheckboxRow}
+                >
+                  <View
+                    style={[
+                      s.checkboxBox,
+                      newAddressIsDefault && s.checkboxBoxChecked,
+                    ]}
+                  >
+                    {newAddressIsDefault && (
+                      <Icon name="check" size={13} color="#FFFFFF" strokeWidth={3} />
+                    )}
+                  </View>
+                  <Text style={s.defaultCheckboxLabel}>Set as default delivery address</Text>
+                </Pressable>
+
                 <View style={s.addressActionsRow}>
                   <Button
-                    title="Save address"
+                    title={editingAddressId ? 'Update address' : 'Save address'}
                     onPress={handleSaveNewAddress}
                     loading={savingAddress}
                     icon="check"
@@ -1425,11 +1738,73 @@ export default function Patient() {
                   <Button
                     title="Cancel"
                     variant="ghost"
-                    onPress={() => setShowAddAddress(false)}
+                    onPress={handleCancelAddressForm}
                   />
                 </View>
               </Card>
-            )}
+            ) : null}
+
+            {/* Saved Addresses List */}
+            {addresses.data && addresses.data.length > 0 ? (
+              addresses.data.map((a) => (
+                <Card key={a.id} style={s.addressCard}>
+                  <View style={s.addressRow}>
+                    <View style={s.addressPinWrap}>
+                      <Icon name="pin" size={18} color={colors.brand600} />
+                    </View>
+                    <View style={s.addressTexts}>
+                      <View style={s.addressTitleRow}>
+                        <Text style={s.addressLabel}>{a.label}</Text>
+                        {a.is_default && <Badge tone="brand">Default</Badge>}
+                      </View>
+                      <Text style={s.addressDetails}>{addressLine(a)}</Text>
+                      {a.landmark ? (
+                        <Text style={s.addressLandmarkText}>Landmark: {a.landmark}</Text>
+                      ) : null}
+
+                      {/* Address Actions Row */}
+                      <View style={s.addressCardActionRow}>
+                        <Pressable
+                          onPress={() => handleStartEditAddress(a)}
+                          style={({ pressed }) => [s.addressActionBtn, pressed && s.pressed]}
+                        >
+                          <Icon name="edit" size={13} color={colors.brand600} />
+                          <Text style={s.addressActionBtnText}>Edit</Text>
+                        </Pressable>
+
+                        {!a.is_default && (
+                          <Pressable
+                            onPress={() => handleSetDefaultAddress(a)}
+                            style={({ pressed }) => [s.addressActionBtn, pressed && s.pressed]}
+                          >
+                            <Icon name="star" size={13} color={colors.muted} />
+                            <Text style={s.addressActionBtnText}>Make default</Text>
+                          </Pressable>
+                        )}
+
+                        <Pressable
+                          onPress={() => handleDeleteAddress(a)}
+                          style={({ pressed }) => [
+                            s.addressActionBtn,
+                            s.addressDeleteBtn,
+                            pressed && s.pressed,
+                          ]}
+                        >
+                          <Icon name="trash" size={13} color="#DC2626" />
+                          <Text style={[s.addressActionBtnText, s.addressDeleteBtnText]}>
+                            Delete
+                          </Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  </View>
+                </Card>
+              ))
+            ) : !showAddAddress ? (
+              <Notice tone="info">
+                No addresses saved yet. Add your home address to easily schedule visits.
+              </Notice>
+            ) : null}
 
             {/* Logout CTA */}
             <Button
@@ -1941,11 +2316,20 @@ const s = StyleSheet.create({
     fontWeight: '700',
     color: colors.brand600,
   },
+  accountNotice: {
+    marginBottom: space.sm,
+  },
   profileCard: {
+    padding: space.md,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.lg,
+  },
+  profileTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 14,
-    padding: 16,
+    gap: 12,
   },
   profileDetails: {
     flex: 1,
@@ -1955,6 +2339,225 @@ const s = StyleSheet.create({
     fontSize: 16,
     fontWeight: '800',
     color: colors.ink,
+  },
+  roleBadge: {
+    alignSelf: 'flex-start',
+    marginTop: 4,
+  },
+  editProfileIconBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: colors.brand50,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: colors.brand200,
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  editProfileIconBtnText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: colors.brand700,
+  },
+  profileDivider: {
+    height: 1,
+    backgroundColor: colors.borderLight,
+    marginVertical: 12,
+  },
+  profileInfoStack: {
+    gap: 8,
+  },
+  profileInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  profileInfoLabel: {
+    fontSize: 12.5,
+    fontWeight: '600',
+    color: colors.muted,
+    width: 60,
+  },
+  profileInfoValue: {
+    fontSize: 13.5,
+    fontWeight: '600',
+    color: colors.ink,
+    flex: 1,
+  },
+  editProfileCard: {
+    padding: space.md,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: colors.brand300,
+    borderRadius: radii.lg,
+    gap: 12,
+  },
+  editProfileHeader: {
+    gap: 2,
+  },
+  editProfileTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  editProfileSub: {
+    fontSize: 12,
+    color: colors.muted,
+  },
+  phoneInputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.md,
+    backgroundColor: '#FFFFFF',
+    overflow: 'hidden',
+  },
+  phonePrefixBadge: {
+    backgroundColor: '#F1F5F9',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRightWidth: 1,
+    borderRightColor: colors.border,
+  },
+  phonePrefixText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  phoneTextInput: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    fontSize: 14,
+    color: colors.ink,
+  },
+  profileActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 4,
+  },
+  addressSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: space.sm,
+    marginBottom: space.xs,
+  },
+  newAddressHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  addressLabelChipsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  addressLabelChip: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: radii.pill,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  addressLabelChipActive: {
+    backgroundColor: colors.brand50,
+    borderColor: colors.brand600,
+  },
+  addressLabelChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.muted,
+  },
+  addressLabelChipTextActive: {
+    color: colors.brand700,
+    fontWeight: '700',
+  },
+  defaultCheckboxRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 4,
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  checkboxBox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxBoxChecked: {
+    backgroundColor: colors.brand600,
+    borderColor: colors.brand600,
+  },
+  defaultCheckboxLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.ink,
+  },
+  addressPinWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.brand50,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addressLandmarkText: {
+    fontSize: 12,
+    color: colors.muted,
+    marginTop: 2,
+  },
+  addressCardActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderLight,
+  },
+  addressActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: radii.sm,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  addressActionBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.ink,
+  },
+  addressDeleteBtn: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FEE2E2',
+    marginLeft: 'auto',
+  },
+  addressDeleteBtnText: {
+    color: '#DC2626',
   },
   profileEmail: {
     fontSize: 13,
