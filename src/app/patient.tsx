@@ -62,6 +62,10 @@ const TAB_REASSURANCES: Record<Tab, { title: string; subtitle: string }> = {
   },
 };
 
+// Tab transition timing: 300ms hold on medical screen, 80ms smooth fade-out (380ms total)
+const TAB_TRANSITION_HOLD_MS = 300;
+const TAB_TRANSITION_FADE_MS = 80;
+
 const STATUS_TONES: Record<string, BadgeTone> = {
   created: 'gray',
   searching: 'amber',
@@ -278,19 +282,19 @@ export default function Patient() {
 
       Animated.timing(tabProgressAnim, {
         toValue: 1,
-        duration: 280,
+        duration: TAB_TRANSITION_HOLD_MS,
         useNativeDriver: false,
       }).start();
 
       Animated.sequence([
         Animated.timing(tabPulseAnim, {
           toValue: 1.15,
-          duration: 140,
+          duration: TAB_TRANSITION_HOLD_MS / 2,
           useNativeDriver: true,
         }),
         Animated.timing(tabPulseAnim, {
           toValue: 1,
-          duration: 140,
+          duration: TAB_TRANSITION_HOLD_MS / 2,
           useNativeDriver: true,
         }),
       ]).start();
@@ -302,13 +306,13 @@ export default function Patient() {
 
         Animated.timing(tabTransitionFade, {
           toValue: 0,
-          duration: 90,
+          duration: TAB_TRANSITION_FADE_MS,
           useNativeDriver: true,
         }).start(() => {
           setIsTabTransitioning(false);
           setTransitionTargetTab(null);
         });
-      }, 280);
+      }, TAB_TRANSITION_HOLD_MS);
     },
     [
       tab,
