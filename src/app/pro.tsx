@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   BackHandler,
   FlatList,
   Linking,
@@ -33,6 +34,29 @@ import {
 
 type Tab = 'home' | 'requests' | 'bookings' | 'profile';
 type BookingFilter = 'all' | 'upcoming' | 'completed' | 'cancelled';
+
+const PRO_TAB_REASSURANCES: Record<Tab, { title: string; subtitle: string }> = {
+  home: {
+    title: "We are with you, don't worry",
+    subtitle: 'Mendyr Healthcare Partner portal · Loading practice overview.',
+  },
+  requests: {
+    title: "We are with you, don't worry",
+    subtitle: 'Checking real-time patient requests and nearby care visits.',
+  },
+  bookings: {
+    title: "We are with you, don't worry",
+    subtitle: 'Synchronizing your scheduled patient appointments & status.',
+  },
+  profile: {
+    title: "We are with you, don't worry",
+    subtitle: 'Loading your verified clinical profile & performance metrics.',
+  },
+};
+
+// Tab transition timing: 380ms hold on medical screen, 80ms smooth fade-out (460ms total)
+const TAB_TRANSITION_HOLD_MS = 380;
+const TAB_TRANSITION_FADE_MS = 80;
 
 export default function Pro() {
   const { user, logout } = useAuth();
@@ -288,20 +312,102 @@ export default function Pro() {
     return true;
   });
 
+  // Tab transition state (< 0.5s calming medical screen)
+  const [transitionTargetTab, setTransitionTargetTab] = useState<Tab | null>(null);
+  const [isTabTransitioning, setIsTabTransitioning] = useState(false);
+  const tabTransitionFade = useRef(new Animated.Value(1)).current;
+  const tabPulseAnim = useRef(new Animated.Value(1)).current;
+  const tabProgressAnim = useRef(new Animated.Value(0)).current;
+  const transitionTimerRef = useRef<NodeJS.Timeout | null>(null);
+
   // Tab navigation history stack (linked list)
   const [tabHistory, setTabHistory] = useState<Tab[]>(['home']);
   const lastBackPressRef = useRef<number>(0);
 
-  const handleSwitchTab = useCallback((targetTab: Tab) => {
-    setTabHistory((prev) => {
-      if (targetTab === 'home') return ['home'];
-      const filtered = prev.filter((t) => t !== targetTab);
-      return [...filtered, targetTab];
-    });
-    setTab(targetTab);
+  useEffect(() => {
+    return () => {
+      if (transitionTimerRef.current) {
+        clearTimeout(transitionTimerRef.current);
+      }
+    };
   }, []);
 
+  const runTabTransition = useCallback(
+    (targetTab: Tab) => {
+      if (isTabTransitioning) return;
+      if (tab === targetTab && !selectedBooking) return;
+
+      if (transitionTimerRef.current) {
+        clearTimeout(transitionTimerRef.current);
+      }
+
+      setTransitionTargetTab(targetTab);
+      setIsTabTransitioning(true);
+
+      tabTransitionFade.setValue(1);
+      tabProgressAnim.setValue(0);
+      tabPulseAnim.setValue(1);
+
+      Animated.timing(tabProgressAnim, {
+        toValue: 1,
+        duration: TAB_TRANSITION_HOLD_MS,
+        useNativeDriver: false,
+      }).start();
+
+      Animated.sequence([
+        Animated.timing(tabPulseAnim, {
+          toValue: 1.15,
+          duration: TAB_TRANSITION_HOLD_MS / 2,
+          useNativeDriver: false,
+        }),
+        Animated.timing(tabPulseAnim, {
+          toValue: 1,
+          duration: TAB_TRANSITION_HOLD_MS / 2,
+          useNativeDriver: false,
+        }),
+      ]).start();
+
+      transitionTimerRef.current = setTimeout(() => {
+        setTab(targetTab);
+        setSelectedBooking(null);
+
+        Animated.timing(tabTransitionFade, {
+          toValue: 0,
+          duration: TAB_TRANSITION_FADE_MS,
+          useNativeDriver: false,
+        }).start(() => {
+          setIsTabTransitioning(false);
+          setTransitionTargetTab(null);
+          tabTransitionFade.setValue(1);
+        });
+      }, TAB_TRANSITION_HOLD_MS);
+    },
+    [
+      tab,
+      selectedBooking,
+      isTabTransitioning,
+      tabTransitionFade,
+      tabProgressAnim,
+      tabPulseAnim,
+    ],
+  );
+
+  const handleSwitchTab = useCallback(
+    (targetTab: Tab) => {
+      setTabHistory((prev) => {
+        if (targetTab === 'home') return ['home'];
+        const filtered = prev.filter((t) => t !== targetTab);
+        return [...filtered, targetTab];
+      });
+      runTabTransition(targetTab);
+    },
+    [runTabTransition],
+  );
+
   const handleGoBack = useCallback(() => {
+    // 0. Block while mid-animation
+    if (isTabTransitioning) return true;
+
     // 1. Dismiss booking detail if viewing one
     if (selectedBooking) {
       setSelectedBooking(null);
@@ -319,14 +425,14 @@ export default function Pro() {
       const nextHistory = tabHistory.slice(0, -1);
       const previousTab = nextHistory[nextHistory.length - 1] ?? 'home';
       setTabHistory(nextHistory);
-      setTab(previousTab);
+      runTabTransition(previousTab);
       return true;
     }
 
     // 4. Fallback if on non-home tab
     if (tab !== 'home') {
       setTabHistory(['home']);
-      setTab('home');
+      runTabTransition('home');
       return true;
     }
 
@@ -343,7 +449,14 @@ export default function Pro() {
     }
 
     return false;
-  }, [selectedBooking, showReviewDetails, tabHistory, tab]);
+  }, [
+    isTabTransitioning,
+    selectedBooking,
+    showReviewDetails,
+    tabHistory,
+    tab,
+    runTabTransition,
+  ]);
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener(
@@ -1252,7 +1365,6 @@ export default function Pro() {
       <View style={s.bottomTabBar}>
         <Pressable
           onPress={() => {
-            setSelectedBooking(null);
             handleSwitchTab('home');
           }}
           style={s.tabButton}
@@ -1261,12 +1373,17 @@ export default function Pro() {
           <Icon
             name="activity"
             size={20}
-            color={tab === 'home' && !selectedBooking ? colors.brand600 : colors.muted}
+            color={
+              (transitionTargetTab ?? tab) === 'home' && (!selectedBooking || isTabTransitioning)
+                ? colors.brand600
+                : colors.muted
+            }
           />
           <Text
             style={[
               s.tabLabel,
-              tab === 'home' && !selectedBooking && s.tabLabelActive,
+              (transitionTargetTab ?? tab) === 'home' && (!selectedBooking || isTabTransitioning) &&
+                s.tabLabelActive,
             ]}
           >
             Overview
@@ -1275,7 +1392,6 @@ export default function Pro() {
 
         <Pressable
           onPress={() => {
-            setSelectedBooking(null);
             handleSwitchTab('requests');
           }}
           style={s.tabButton}
@@ -1284,12 +1400,17 @@ export default function Pro() {
           <Icon
             name="clock"
             size={20}
-            color={tab === 'requests' && !selectedBooking ? colors.brand600 : colors.muted}
+            color={
+              (transitionTargetTab ?? tab) === 'requests' && (!selectedBooking || isTabTransitioning)
+                ? colors.brand600
+                : colors.muted
+            }
           />
           <Text
             style={[
               s.tabLabel,
-              tab === 'requests' && !selectedBooking && s.tabLabelActive,
+              (transitionTargetTab ?? tab) === 'requests' && (!selectedBooking || isTabTransitioning) &&
+                s.tabLabelActive,
             ]}
           >
             Requests
@@ -1306,12 +1427,17 @@ export default function Pro() {
           <Icon
             name="calendar"
             size={20}
-            color={tab === 'bookings' || selectedBooking ? colors.brand600 : colors.muted}
+            color={
+              (transitionTargetTab ?? tab) === 'bookings' || (selectedBooking && !isTabTransitioning)
+                ? colors.brand600
+                : colors.muted
+            }
           />
           <Text
             style={[
               s.tabLabel,
-              (tab === 'bookings' || selectedBooking) && s.tabLabelActive,
+              ((transitionTargetTab ?? tab) === 'bookings' || (selectedBooking && !isTabTransitioning)) &&
+                s.tabLabelActive,
             ]}
           >
             Visits
@@ -1320,7 +1446,6 @@ export default function Pro() {
 
         <Pressable
           onPress={() => {
-            setSelectedBooking(null);
             handleSwitchTab('profile');
           }}
           style={s.tabButton}
@@ -1329,18 +1454,84 @@ export default function Pro() {
           <Icon
             name="user"
             size={20}
-            color={tab === 'profile' && !selectedBooking ? colors.brand600 : colors.muted}
+            color={
+              (transitionTargetTab ?? tab) === 'profile' && (!selectedBooking || isTabTransitioning)
+                ? colors.brand600
+                : colors.muted
+            }
           />
           <Text
             style={[
               s.tabLabel,
-              tab === 'profile' && !selectedBooking && s.tabLabelActive,
+              (transitionTargetTab ?? tab) === 'profile' && (!selectedBooking || isTabTransitioning) &&
+                s.tabLabelActive,
             ]}
           >
             Profile
           </Text>
         </Pressable>
       </View>
+
+      {/* White Medical Tab Transition Overlay (<0.5s calming screen) */}
+      {isTabTransitioning && (
+        <Animated.View
+          style={[
+            s.tabTransitionOverlay,
+            { opacity: tabTransitionFade },
+          ]}
+          pointerEvents="auto"
+        >
+          <View style={s.medicalTransitionCard}>
+            {/* Pulsing Medical Heartbeat Ring */}
+            <Animated.View
+              style={[
+                s.pulseIconWrap,
+                { transform: [{ scale: tabPulseAnim }] },
+              ]}
+            >
+              <View style={s.pulseIconInner}>
+                <Icon name="heart" size={24} color="#FFFFFF" strokeWidth={2.4} />
+              </View>
+            </Animated.View>
+
+            {/* Reassuring Medical Title */}
+            <Text style={s.reassureTitle}>{"We are with you, don't worry"}</Text>
+
+            {/* Contextual Healthcare Subtitle */}
+            <Text style={s.reassureSub}>
+              {PRO_TAB_REASSURANCES[transitionTargetTab ?? tab].subtitle}
+            </Text>
+
+            {/* Medical Trust Widgets */}
+            <View style={s.trustRow}>
+              <View style={s.trustBadge}>
+                <Icon name="shieldCheck" size={15} color="#10B981" strokeWidth={2.2} />
+                <Text style={s.trustBadgeText}>Mendyr Partner Network</Text>
+              </View>
+              <View style={s.trustDivider} />
+              <View style={s.trustBadge}>
+                <Icon name="activity" size={15} color="#1262E2" strokeWidth={2.2} />
+                <Text style={s.trustBadgeText}>Clinical Dispatch</Text>
+              </View>
+            </View>
+
+            {/* Smooth Progress Bar */}
+            <View style={s.progressBarTrack}>
+              <Animated.View
+                style={[
+                  s.progressBarFill,
+                  {
+                    width: tabProgressAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: ['0%', '100%'],
+                    }),
+                  },
+                ]}
+              />
+            </View>
+          </View>
+        </Animated.View>
+      )}
     </SafeAreaView>
   );
 }
@@ -2268,5 +2459,116 @@ const s = StyleSheet.create({
   },
   pressed: {
     opacity: 0.8,
+  },
+  tabTransitionOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 56,
+    backgroundColor: '#FFFFFF',
+    zIndex: 9999,
+    elevation: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: space.lg,
+  },
+  medicalTransitionCard: {
+    width: '100%',
+    maxWidth: 340,
+    backgroundColor: '#FFFFFF',
+    borderRadius: radii.xl,
+    paddingVertical: space.xl,
+    paddingHorizontal: space.lg,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    ...Platform.select({
+      web: {
+        boxShadow: '0 12px 32px rgba(18, 98, 226, 0.08)',
+      },
+      default: {
+        shadowColor: '#1262E2',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.08,
+        shadowRadius: 16,
+        elevation: 4,
+      },
+    }),
+  },
+  pulseIconWrap: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1.5,
+    borderColor: '#BFDBFE',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: space.md,
+  },
+  pulseIconInner: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: '#1262E2',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reassureTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.ink,
+    textAlign: 'center',
+    letterSpacing: -0.3,
+  },
+  reassureSub: {
+    fontSize: 13,
+    fontWeight: '400',
+    color: colors.muted,
+    textAlign: 'center',
+    marginTop: 6,
+    lineHeight: 18,
+    paddingHorizontal: space.xs,
+  },
+  trustRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    marginTop: 18,
+    gap: 10,
+  },
+  trustBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  trustBadgeText: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: colors.ink,
+  },
+  trustDivider: {
+    width: 1,
+    height: 14,
+    backgroundColor: '#E2E8F0',
+  },
+  progressBarTrack: {
+    width: '100%',
+    height: 3,
+    backgroundColor: '#EDF2F7',
+    borderRadius: 1.5,
+    overflow: 'hidden',
+    marginTop: 18,
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: '#1262E2',
+    borderRadius: 1.5,
   },
 });

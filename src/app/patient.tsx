@@ -64,8 +64,8 @@ const TAB_REASSURANCES: Record<Tab, { title: string; subtitle: string }> = {
   },
 };
 
-// Tab transition timing: 300ms hold on medical screen, 80ms smooth fade-out (380ms total)
-const TAB_TRANSITION_HOLD_MS = 300;
+// Tab transition timing: 380ms hold on medical screen, 80ms smooth fade-out
+const TAB_TRANSITION_HOLD_MS = 380;
 const TAB_TRANSITION_FADE_MS = 80;
 
 const STATUS_TONES: Record<string, BadgeTone> = {
@@ -223,7 +223,7 @@ export default function Patient() {
   // Tab transition state (< 0.5s calming medical screen)
   const [transitionTargetTab, setTransitionTargetTab] = useState<Tab | null>(null);
   const [isTabTransitioning, setIsTabTransitioning] = useState(false);
-  const tabTransitionFade = useRef(new Animated.Value(0)).current;
+  const tabTransitionFade = useRef(new Animated.Value(1)).current;
   const tabPulseAnim = useRef(new Animated.Value(1)).current;
   const tabProgressAnim = useRef(new Animated.Value(0)).current;
   const transitionTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -232,7 +232,7 @@ export default function Patient() {
   const [tabHistory, setTabHistory] = useState<Tab[]>(['home']);
   const lastBackPressRef = useRef<number>(0);
 
-  // Cold start splash state (~0.25s blue screen)
+  // Cold start splash state (minimum 1.0s blue screen)
   const [showColdSplash, setShowColdSplash] = useState(() => !hasColdSplashShown());
   const coldFadeAnim = useRef(new Animated.Value(1)).current;
 
@@ -242,12 +242,12 @@ export default function Patient() {
       const timer = setTimeout(() => {
         Animated.timing(coldFadeAnim, {
           toValue: 0,
-          duration: 160,
+          duration: 200,
           useNativeDriver: true,
         }).start(() => {
           setShowColdSplash(false);
         });
-      }, 260); // 0.25s
+      }, 1000); // 1.0s minimum
       return () => clearTimeout(timer);
     }
   }, [showColdSplash, coldFadeAnim]);
@@ -266,11 +266,11 @@ export default function Patient() {
       targetBookingId: string | null = null,
       targetService: Service | null = null,
     ) => {
+      if (isTabTransitioning) return;
       if (
         tab === targetTab &&
         selectedBookingId === targetBookingId &&
-        (!targetService || selectedService?.id === targetService?.id) &&
-        !isTabTransitioning
+        (!targetService || selectedService?.id === targetService?.id)
       ) {
         return;
       }
@@ -296,12 +296,12 @@ export default function Patient() {
         Animated.timing(tabPulseAnim, {
           toValue: 1.15,
           duration: TAB_TRANSITION_HOLD_MS / 2,
-          useNativeDriver: true,
+          useNativeDriver: false,
         }),
         Animated.timing(tabPulseAnim, {
           toValue: 1,
           duration: TAB_TRANSITION_HOLD_MS / 2,
-          useNativeDriver: true,
+          useNativeDriver: false,
         }),
       ]).start();
 
@@ -313,10 +313,11 @@ export default function Patient() {
         Animated.timing(tabTransitionFade, {
           toValue: 0,
           duration: TAB_TRANSITION_FADE_MS,
-          useNativeDriver: true,
+          useNativeDriver: false,
         }).start(() => {
           setIsTabTransitioning(false);
           setTransitionTargetTab(null);
+          tabTransitionFade.setValue(1);
         });
       }, TAB_TRANSITION_HOLD_MS);
     },
@@ -3371,7 +3372,8 @@ const s = StyleSheet.create({
     right: 0,
     bottom: 56,
     backgroundColor: '#FFFFFF',
-    zIndex: 90,
+    zIndex: 9999,
+    elevation: 30,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: space.lg,

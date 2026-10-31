@@ -10,8 +10,8 @@ import { markColdSplashShown } from '@/lib/splash';
 
 const ONBOARDING_KEY = 'mendyr.onboarding-complete';
 
-// 0.25 second splash delay as requested
-const COLD_START_DELAY_MS = 260;
+// Minimum 1 second cold-start splash as requested
+const COLD_START_DELAY_MS = 1000;
 
 export default function Index() {
   const { user, ready } = useAuth();
@@ -19,7 +19,7 @@ export default function Index() {
   const [hasSeenOnboarding, setHasSeenOnboarding] = useState(false);
   const [minSplashDone, setMinSplashDone] = useState(false);
 
-  /* Enforce minimum 0.25s cold-start splash */
+  /* Enforce minimum 1.0s cold-start splash */
   useEffect(() => {
     // Hide native splash screen as soon as React component tree mounts
     SplashScreen.hideAsync().catch(() => {});
