@@ -1,15 +1,19 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
+  BackHandler,
   FlatList,
   Linking,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
+  ToastAndroid,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -23,10 +27,36 @@ import type { BookingRequest, ProBooking, ProfessionalProfile } from '@/lib/type
 import { colors, radii, space } from '@/constants/theme';
 import { Icon, ProfessionIcon } from '@/components/icons';
 import { Avatar, Badge, Button, Card, Notice, Title, Body } from '@/components/ui';
-import { ProNotificationBanner } from '@/components/pro-notification-banner';
+import {
+  ProNotificationBanner,
+  requestNotificationPermission,
+} from '@/components/pro-notification-banner';
 
 type Tab = 'home' | 'requests' | 'bookings' | 'profile';
-type BookingFilter = 'all' | 'upcoming' | 'completed';
+type BookingFilter = 'all' | 'upcoming' | 'completed' | 'cancelled';
+
+const PRO_TAB_REASSURANCES: Record<Tab, { title: string; subtitle: string }> = {
+  home: {
+    title: "We are with you, don't worry",
+    subtitle: 'Mendyr Healthcare Partner portal · Loading practice overview.',
+  },
+  requests: {
+    title: "We are with you, don't worry",
+    subtitle: 'Checking real-time patient requests and nearby care visits.',
+  },
+  bookings: {
+    title: "We are with you, don't worry",
+    subtitle: 'Synchronizing your scheduled patient appointments & status.',
+  },
+  profile: {
+    title: "We are with you, don't worry",
+    subtitle: 'Loading your verified clinical profile & performance metrics.',
+  },
+};
+
+// Tab transition timing: 380ms hold on medical screen, 80ms smooth fade-out (460ms total)
+const TAB_TRANSITION_HOLD_MS = 380;
+const TAB_TRANSITION_FADE_MS = 80;
 
 export default function Pro() {
   const { user, logout } = useAuth();
@@ -41,19 +71,21 @@ export default function Pro() {
   const requests = useQuery({
     queryKey: ['requests'],
     queryFn: () => api<BookingRequest[]>('/bookings/professional/requests'),
-    refetchInterval: 12000,
+    refetchInterval: 5000,
   });
 
   const bookings = useQuery({
     queryKey: ['pro-bookings'],
     queryFn: () => api<ProBooking[]>('/bookings/professional/mine?page_size=100'),
-    refetchInterval: 25000,
+    refetchInterval: 5000,
   });
 
   const [msg, setMsg] = useState('');
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const [showReviewDetails, setShowReviewDetails] = useState(false);
   const [bookingFilter, setBookingFilter] = useState<BookingFilter>('all');
+  const [togglingAccepting, setTogglingAccepting] = useState(false);
+  const [hasNotificationPermission, setHasNotificationPermission] = useState<boolean>(true);
 
   // Currently opened visit detail
   const [selectedBooking, setSelectedBooking] = useState<ProBooking | null>(null);
@@ -65,9 +97,73 @@ export default function Pro() {
 
   const isVerified = profile.data?.verification_status === 'approved';
 
+
+
+  // Check Web/PWA Notification Permission
+  useEffect(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && 'Notification' in window) {
+      setHasNotificationPermission(Notification.permission === 'granted');
+    }
+  }, []);
+
+  const handleEnableSystemNotifications = async () => {
+    const granted = await requestNotificationPermission();
+    setHasNotificationPermission(granted);
+    if (granted) {
+      Alert.alert(
+        'System Notifications Active! 🔔',
+        'You will now get alerts outside the app on your device when bookings are requested or cancelled.',
+      );
+    }
+  };
+
+  // Keep selectedBooking in sync when bookings refetches (e.g. if patient cancels)
+  useEffect(() => {
+    if (selectedBooking && bookings.data) {
+      const latest = bookings.data.find((b) => b.id === selectedBooking.id);
+      if (
+        latest &&
+        (latest.status !== selectedBooking.status ||
+          latest.completed_at !== selectedBooking.completed_at)
+      ) {
+        setSelectedBooking(latest);
+      }
+    }
+  }, [bookings.data, selectedBooking]);
+
+  // Toggle accepting incoming requests
+  async function handleToggleAccepting(newValue: boolean) {
+    setTogglingAccepting(true);
+    try {
+      await api<ProfessionalProfile>('/professionals/me', {
+        method: 'PATCH',
+        body: { is_accepting_bookings: newValue },
+      });
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['pro'] }),
+        qc.invalidateQueries({ queryKey: ['requests'] }),
+      ]);
+      Alert.alert(
+        newValue ? 'Requests Turned On' : 'Requests Paused',
+        newValue
+          ? 'You are now live and accepting visit requests near you!'
+          : 'You have paused incoming visit requests.',
+      );
+    } catch (e) {
+      Alert.alert('Unable to update', e instanceof Error ? e.message : 'Failed to update status.');
+    } finally {
+      setTogglingAccepting(false);
+    }
+  }
+
   // Handle incoming notification banner click
-  const handleViewNotificationRequest = (request: BookingRequest) => {
-    setTab('requests');
+  const handleViewNotificationRequest = (_request: BookingRequest) => {
+    handleSwitchTab('requests');
+  };
+
+  const handleViewNotificationBooking = (booking: ProBooking) => {
+    setSelectedBooking(booking);
+    handleSwitchTab('bookings');
   };
 
   // Dial patient phone
@@ -121,7 +217,7 @@ export default function Pro() {
       if (accepted) {
         setSelectedBooking(accepted);
       }
-      setTab('bookings');
+      handleSwitchTab('bookings');
     } catch (e) {
       setMsg(e instanceof Error ? e.message : 'Unable to accept request.');
     } finally {
@@ -210,30 +306,217 @@ export default function Pro() {
     if (bookingFilter === 'completed') {
       return b.status === 'completed';
     }
+    if (bookingFilter === 'cancelled') {
+      return ['cancelled', 'no_show', 'failed'].includes(b.status);
+    }
     return true;
   });
 
+  // Tab transition state (< 0.5s calming medical screen)
+  const [transitionTargetTab, setTransitionTargetTab] = useState<Tab | null>(null);
+  const [isTabTransitioning, setIsTabTransitioning] = useState(false);
+  const tabTransitionFade = useRef(new Animated.Value(1)).current;
+  const tabPulseAnim = useRef(new Animated.Value(1)).current;
+  const tabProgressAnim = useRef(new Animated.Value(0)).current;
+  const transitionTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Tab navigation history stack (linked list)
+  const [tabHistory, setTabHistory] = useState<Tab[]>(['home']);
+  const lastBackPressRef = useRef<number>(0);
+
+  useEffect(() => {
+    return () => {
+      if (transitionTimerRef.current) {
+        clearTimeout(transitionTimerRef.current);
+      }
+    };
+  }, []);
+
+  const runTabTransition = useCallback(
+    (targetTab: Tab) => {
+      if (isTabTransitioning) return;
+      if (tab === targetTab && !selectedBooking) return;
+
+      if (transitionTimerRef.current) {
+        clearTimeout(transitionTimerRef.current);
+      }
+
+      setTransitionTargetTab(targetTab);
+      setIsTabTransitioning(true);
+
+      tabTransitionFade.setValue(1);
+      tabProgressAnim.setValue(0);
+      tabPulseAnim.setValue(1);
+
+      Animated.timing(tabProgressAnim, {
+        toValue: 1,
+        duration: TAB_TRANSITION_HOLD_MS,
+        useNativeDriver: false,
+      }).start();
+
+      Animated.sequence([
+        Animated.timing(tabPulseAnim, {
+          toValue: 1.15,
+          duration: TAB_TRANSITION_HOLD_MS / 2,
+          useNativeDriver: false,
+        }),
+        Animated.timing(tabPulseAnim, {
+          toValue: 1,
+          duration: TAB_TRANSITION_HOLD_MS / 2,
+          useNativeDriver: false,
+        }),
+      ]).start();
+
+      transitionTimerRef.current = setTimeout(() => {
+        setTab(targetTab);
+        setSelectedBooking(null);
+
+        Animated.timing(tabTransitionFade, {
+          toValue: 0,
+          duration: TAB_TRANSITION_FADE_MS,
+          useNativeDriver: false,
+        }).start(() => {
+          setIsTabTransitioning(false);
+          setTransitionTargetTab(null);
+          tabTransitionFade.setValue(1);
+        });
+      }, TAB_TRANSITION_HOLD_MS);
+    },
+    [
+      tab,
+      selectedBooking,
+      isTabTransitioning,
+      tabTransitionFade,
+      tabProgressAnim,
+      tabPulseAnim,
+    ],
+  );
+
+  const handleSwitchTab = useCallback(
+    (targetTab: Tab) => {
+      setTabHistory((prev) => {
+        if (targetTab === 'home') return ['home'];
+        const filtered = prev.filter((t) => t !== targetTab);
+        return [...filtered, targetTab];
+      });
+      runTabTransition(targetTab);
+    },
+    [runTabTransition],
+  );
+
+  const handleGoBack = useCallback(() => {
+    // 0. Block while mid-animation
+    if (isTabTransitioning) return true;
+
+    // 1. Dismiss booking detail if viewing one
+    if (selectedBooking) {
+      setSelectedBooking(null);
+      return true;
+    }
+
+    // 2. Dismiss review detail modal if open
+    if (showReviewDetails) {
+      setShowReviewDetails(false);
+      return true;
+    }
+
+    // 3. Navigate backwards through linked list tab history
+    if (tabHistory.length > 1) {
+      const nextHistory = tabHistory.slice(0, -1);
+      const previousTab = nextHistory[nextHistory.length - 1] ?? 'home';
+      setTabHistory(nextHistory);
+      runTabTransition(previousTab);
+      return true;
+    }
+
+    // 4. Fallback if on non-home tab
+    if (tab !== 'home') {
+      setTabHistory(['home']);
+      runTabTransition('home');
+      return true;
+    }
+
+    // 5. At root home: Double tap back to exit on Android
+    if (Platform.OS === 'android') {
+      const now = Date.now();
+      if (lastBackPressRef.current && now - lastBackPressRef.current < 2000) {
+        BackHandler.exitApp();
+        return true;
+      }
+      lastBackPressRef.current = now;
+      ToastAndroid.show('Press back again to exit', ToastAndroid.SHORT);
+      return true;
+    }
+
+    return false;
+  }, [
+    isTabTransitioning,
+    selectedBooking,
+    showReviewDetails,
+    tabHistory,
+    tab,
+    runTabTransition,
+  ]);
+
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener(
+      'hardwareBackPress',
+      () => {
+        return handleGoBack();
+      },
+    );
+    return () => subscription.remove();
+  }, [handleGoBack]);
+
   return (
     <SafeAreaView style={s.root} edges={['top', 'bottom']}>
-      {/* Floating In-App Live Notification Banner for New Requests */}
+      {/* Floating In-App Live Notification Banner for New Requests & Cancellations */}
       <ProNotificationBanner
         requests={requests.data}
+        bookings={bookings.data}
         onViewRequest={handleViewNotificationRequest}
+        onViewBooking={handleViewNotificationBooking}
       />
 
       {/* Header bar */}
       <View style={s.header}>
-        <View style={s.headerLeft}>
-          <Avatar name={user?.full_name ?? 'Pro'} size={38} />
-          <View>
-            <Text style={s.headerGreeting}>
-              {user?.full_name?.split(' ')[0] ?? 'Professional'}
-            </Text>
-            <Text style={s.headerSub}>
-              {profile.data?.professional_type?.replace(/_/g, ' ') ?? 'Healthcare Pro'}
-            </Text>
+        {tab !== 'home' ? (
+          <Pressable
+            onPress={handleGoBack}
+            style={({ pressed }) => [s.headerBackBtn, pressed && s.pressed]}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+          >
+            <View style={s.headerBackIconWrap}>
+              <Icon name="chevronLeft" size={20} color={colors.ink} strokeWidth={2.4} />
+            </View>
+            <View>
+              <Text style={s.headerGreeting}>
+                {tab === 'requests'
+                  ? 'Incoming Requests'
+                  : tab === 'bookings'
+                    ? 'Patient Visits'
+                    : 'Pro Profile'}
+              </Text>
+              <Text style={s.headerSub}>
+                Back to {tabHistory.length > 1 ? tabHistory[tabHistory.length - 2] : 'home'}
+              </Text>
+            </View>
+          </Pressable>
+        ) : (
+          <View style={s.headerLeft}>
+            <Avatar name={user?.full_name ?? 'Pro'} size={38} />
+            <View>
+              <Text style={s.headerGreeting}>
+                {user?.full_name?.split(' ')[0] ?? 'Professional'}
+              </Text>
+              <Text style={s.headerSub}>
+                {profile.data?.professional_type?.replace(/_/g, ' ') ?? 'Healthcare Pro'}
+              </Text>
+            </View>
           </View>
-        </View>
+        )}
 
         <Badge tone={isVerified ? 'green' : 'amber'}>
           {isVerified ? 'Verified Pro' : 'Under Review'}
@@ -290,6 +573,12 @@ export default function Pro() {
                 </Text>
               </View>
             </View>
+
+            {selectedBooking.status === 'cancelled' && (
+              <Notice tone="error">
+                The patient cancelled this booking. No visit or travel is required.
+              </Notice>
+            )}
 
             {/* PATIENT CONTACT CARD */}
             <Card style={s.patientDetailCard}>
@@ -540,6 +829,63 @@ export default function Pro() {
               </Card>
             )}
 
+            {/* Live Accepting Requests Toggle Card */}
+            <Card style={s.acceptingToggleCard}>
+              <View style={s.acceptingToggleTexts}>
+                <View style={s.acceptingStatusDotRow}>
+                  <View
+                    style={[
+                      s.statusDot,
+                      {
+                        backgroundColor: profile.data?.is_accepting_bookings
+                          ? colors.success
+                          : colors.muted,
+                      },
+                    ]}
+                  />
+                  <Text style={s.acceptingToggleTitle}>
+                    {profile.data?.is_accepting_bookings
+                      ? 'Accepting new requests'
+                      : 'Not accepting new requests'}
+                  </Text>
+                </View>
+                <Text style={s.acceptingToggleDesc}>
+                  {profile.data?.is_accepting_bookings
+                    ? 'Requests near you, inside your timings, show up in Requests.'
+                    : 'Turn this on when you are ready to take visits.'}
+                </Text>
+              </View>
+              <Switch
+                value={profile.data?.is_accepting_bookings ?? false}
+                onValueChange={handleToggleAccepting}
+                disabled={togglingAccepting}
+                trackColor={{ false: colors.border, true: colors.brand600 }}
+                thumbColor="#FFFFFF"
+              />
+            </Card>
+
+            {/* Outside-the-App Notification Permission Banner */}
+            {Platform.OS === 'web' && !hasNotificationPermission && (
+              <Card style={s.permissionBannerCard}>
+                <View style={s.permissionBannerRow}>
+                  <View style={s.permissionIconWrap}>
+                    <Icon name="sparkles" size={18} color={colors.brand600} />
+                  </View>
+                  <View style={s.permissionBannerTexts}>
+                    <Text style={s.permissionBannerTitle}>Get Alerts Outside The App</Text>
+                    <Text style={s.permissionBannerSub}>
+                      Receive lock-screen alerts & chimes even when your phone or browser is in the background.
+                    </Text>
+                  </View>
+                  <Button
+                    title="Enable"
+                    size="sm"
+                    onPress={handleEnableSystemNotifications}
+                  />
+                </View>
+              </Card>
+            )}
+
             {/* Profession summary tile */}
             {profile.data?.professional_type && (
               <Card style={s.proSummaryCard}>
@@ -610,7 +956,7 @@ export default function Pro() {
             {/* Requests CTA */}
             <Button
               title={`View Open Requests (${requests.data?.length ?? 0})`}
-              onPress={() => setTab('requests')}
+              onPress={() => handleSwitchTab('requests')}
               icon="arrowRight"
               iconRight
               size="lg"
@@ -619,10 +965,58 @@ export default function Pro() {
         ) : tab === 'requests' ? (
           /* REQUESTS TAB */
           <View style={s.tabWrapper}>
-            <View style={s.screenHeadingWrap}>
-              <Title>Requests near you</Title>
-              <Body muted>Visits inside your travel radius.</Body>
+            <View style={s.requestsHeaderBar}>
+              <View style={s.requestsHeaderTexts}>
+                <Title>Requests near you</Title>
+                <Body muted>
+                  Visits inside your {profile.data?.service_radius_km ?? 15} km travel radius.
+                </Body>
+              </View>
+              <Pressable
+                onPress={() => requests.refetch()}
+                style={({ pressed }) => [s.refreshIconBtn, pressed && s.pressed]}
+                accessibilityLabel="Refresh requests"
+              >
+                <Icon
+                  name="refresh"
+                  size={18}
+                  color={requests.isFetching ? colors.brand600 : colors.muted}
+                />
+              </Pressable>
             </View>
+
+            {/* Paused Requests Warning Card */}
+            {profile.data && !profile.data.is_accepting_bookings && (
+              <View style={s.noticeWrap}>
+                <Card style={s.pausedWarningCard}>
+                  <View style={s.pausedWarningRow}>
+                    <Icon name="info" size={20} color={colors.warning} />
+                    <View style={s.pausedWarningTexts}>
+                      <Text style={s.pausedWarningTitle}>Requests are paused</Text>
+                      <Text style={s.pausedWarningSub}>
+                        Turn on requests to start receiving nearby patient bookings.
+                      </Text>
+                    </View>
+                    <Switch
+                      value={false}
+                      onValueChange={handleToggleAccepting}
+                      disabled={togglingAccepting}
+                      trackColor={{ false: colors.border, true: colors.brand600 }}
+                      thumbColor="#FFFFFF"
+                    />
+                  </View>
+                </Card>
+              </View>
+            )}
+
+            {/* Verification Pending Notice */}
+            {!isVerified && (
+              <View style={s.noticeWrap}>
+                <Notice tone="warning">
+                  Your profile is under clinical review. Patient requests become visible as soon as your council credentials are approved by our team.
+                </Notice>
+              </View>
+            )}
 
             {msg ? (
               <View style={s.noticeWrap}>
@@ -640,9 +1034,74 @@ export default function Pro() {
                 keyExtractor={(item) => item.id}
                 contentContainerStyle={s.scrollContainer}
                 ListEmptyComponent={
-                  <Notice tone="info">
-                    No open visit requests right now. As patients book in your area, they will appear here in real-time.
-                  </Notice>
+                  <Card style={s.emptyRequestsCard}>
+                    <View style={s.emptyRequestsHeader}>
+                      <View style={s.emptyClockIconWrap}>
+                        <Icon name="clock" size={22} color={colors.brand600} />
+                      </View>
+                      <Text style={s.emptyRequestsTitle}>No open requests right now</Text>
+                      <Text style={s.emptyRequestsSub}>
+                        Auto-checking every 5s. As soon as a patient books near you, an alert will sound and pop up.
+                      </Text>
+                    </View>
+
+                    <View style={s.diagnosticList}>
+                      <Text style={s.diagnosticListTitle}>Things that decide what you see:</Text>
+
+                      <View style={s.diagnosticItem}>
+                        <Icon
+                          name={profile.data?.is_accepting_bookings ? 'check' : 'info'}
+                          size={16}
+                          color={profile.data?.is_accepting_bookings ? colors.success : colors.warning}
+                        />
+                        <Text style={s.diagnosticItemText}>
+                          {profile.data?.is_accepting_bookings
+                            ? "You're accepting new requests"
+                            : "You've paused new requests — switch it on above"}
+                        </Text>
+                      </View>
+
+                      <View style={s.diagnosticItem}>
+                        <Icon
+                          name={isVerified ? 'check' : 'info'}
+                          size={16}
+                          color={isVerified ? colors.success : colors.warning}
+                        />
+                        <Text style={s.diagnosticItemText}>
+                          {isVerified
+                            ? 'Verification status: Approved'
+                            : 'Verification status: Under Review (Backend activates requests upon approval)'}
+                        </Text>
+                      </View>
+
+                      <View style={s.diagnosticItem}>
+                        <Icon name="check" size={16} color={colors.success} />
+                        <Text style={s.diagnosticItemText}>
+                          Matching profession:{' '}
+                          {profile.data?.professional_type
+                            ? profile.data.professional_type.replace(/_/g, ' ')
+                            : 'Healthcare Specialist'}
+                        </Text>
+                      </View>
+
+                      <View style={s.diagnosticItem}>
+                        <Icon name="check" size={16} color={colors.success} />
+                        <Text style={s.diagnosticItemText}>
+                          Travel radius: Visits within {profile.data?.service_radius_km ?? 15} km
+                        </Text>
+                      </View>
+                    </View>
+
+                    <Button
+                      title={requests.isFetching ? 'Refreshing...' : 'Check now'}
+                      variant="outline"
+                      icon="refresh"
+                      onPress={() => requests.refetch()}
+                      loading={requests.isFetching}
+                      size="sm"
+                      style={s.manualRefreshBtn}
+                    />
+                  </Card>
                 }
                 renderItem={({ item }) => (
                   <Card style={s.requestCard}>
@@ -693,13 +1152,28 @@ export default function Pro() {
         ) : tab === 'bookings' ? (
           /* YOUR VISITS TAB (Interactive List) */
           <View style={s.tabWrapper}>
-            <View style={s.screenHeadingWrap}>
-              <Title>Your visits</Title>
-              <Body muted>Tap on any visit to see patient details, call, or open Google Maps.</Body>
+            <View style={s.requestsHeaderBar}>
+              <View style={s.requestsHeaderTexts}>
+                <Title>Your visits</Title>
+                <Body muted>Tap on any visit to see patient details, call, or open Google Maps.</Body>
+              </View>
+              <Pressable
+                onPress={() => bookings.refetch()}
+                style={({ pressed }) => [s.refreshIconBtn, pressed && s.pressed]}
+                accessibilityLabel="Refresh visits"
+              >
+                <Icon
+                  name="refresh"
+                  size={18}
+                  color={bookings.isFetching ? colors.brand600 : colors.muted}
+                />
+              </Pressable>
+            </View>
 
+            <View style={s.screenHeadingWrap}>
               {/* Filter Chips */}
               <View style={s.filterChipsRow}>
-                {(['all', 'upcoming', 'completed'] as BookingFilter[]).map((f) => (
+                {(['all', 'upcoming', 'completed', 'cancelled'] as BookingFilter[]).map((f) => (
                   <Pressable
                     key={f}
                     onPress={() => setBookingFilter(f)}
@@ -718,7 +1192,9 @@ export default function Pro() {
                         ? `All (${allBookings.length})`
                         : f === 'upcoming'
                         ? 'Upcoming'
-                        : 'Completed'}
+                        : f === 'completed'
+                        ? 'Completed'
+                        : 'Cancelled'}
                     </Text>
                   </Pressable>
                 ))}
@@ -734,7 +1210,9 @@ export default function Pro() {
                 contentContainerStyle={s.scrollContainer}
                 ListEmptyComponent={
                   <Notice tone="info">
-                    You have no {bookingFilter !== 'all' ? bookingFilter : ''} visits yet. Accept open requests from the Requests tab to start taking visits.
+                    {bookingFilter === 'cancelled'
+                      ? 'No cancelled visits.'
+                      : `You have no ${bookingFilter !== 'all' ? bookingFilter : ''} visits yet. Accept open requests from the Requests tab to start taking visits.`}
                   </Notice>
                 }
                 renderItem={({ item }) => (
@@ -751,12 +1229,21 @@ export default function Pro() {
                               ? 'green'
                               : item.status === 'in_progress'
                               ? 'violet'
+                              : item.status === 'cancelled'
+                              ? 'red'
                               : 'blue'
                           }
                         >
                           {statusLabel(item.status)}
                         </Badge>
                       </View>
+
+                      {item.status === 'cancelled' && (
+                        <View style={s.cancelledBannerMini}>
+                          <Icon name="x" size={13} color="#DC2626" strokeWidth={2.4} />
+                          <Text style={s.cancelledBannerMiniText}>The patient cancelled this booking</Text>
+                        </View>
+                      )}
 
                       <View style={s.requestMetaRow}>
                         <Icon name="clock" size={14} color={colors.muted} />
@@ -845,6 +1332,16 @@ export default function Pro() {
                 </Text>
               </View>
               <View style={s.profileMetaRow}>
+                <Text style={s.metaKey}>Accepting Requests</Text>
+                <Switch
+                  value={profile.data?.is_accepting_bookings ?? false}
+                  onValueChange={handleToggleAccepting}
+                  disabled={togglingAccepting}
+                  trackColor={{ false: colors.border, true: colors.brand600 }}
+                  thumbColor="#FFFFFF"
+                />
+              </View>
+              <View style={s.profileMetaRow}>
                 <Text style={s.metaKey}>Payout Share</Text>
                 <Text style={s.metaValue}>80% (Mendyr 20%)</Text>
               </View>
@@ -868,8 +1365,7 @@ export default function Pro() {
       <View style={s.bottomTabBar}>
         <Pressable
           onPress={() => {
-            setSelectedBooking(null);
-            setTab('home');
+            handleSwitchTab('home');
           }}
           style={s.tabButton}
           accessibilityRole="button"
@@ -877,12 +1373,17 @@ export default function Pro() {
           <Icon
             name="activity"
             size={20}
-            color={tab === 'home' && !selectedBooking ? colors.brand600 : colors.muted}
+            color={
+              (transitionTargetTab ?? tab) === 'home' && (!selectedBooking || isTabTransitioning)
+                ? colors.brand600
+                : colors.muted
+            }
           />
           <Text
             style={[
               s.tabLabel,
-              tab === 'home' && !selectedBooking && s.tabLabelActive,
+              (transitionTargetTab ?? tab) === 'home' && (!selectedBooking || isTabTransitioning) &&
+                s.tabLabelActive,
             ]}
           >
             Overview
@@ -891,8 +1392,7 @@ export default function Pro() {
 
         <Pressable
           onPress={() => {
-            setSelectedBooking(null);
-            setTab('requests');
+            handleSwitchTab('requests');
           }}
           style={s.tabButton}
           accessibilityRole="button"
@@ -900,12 +1400,17 @@ export default function Pro() {
           <Icon
             name="clock"
             size={20}
-            color={tab === 'requests' && !selectedBooking ? colors.brand600 : colors.muted}
+            color={
+              (transitionTargetTab ?? tab) === 'requests' && (!selectedBooking || isTabTransitioning)
+                ? colors.brand600
+                : colors.muted
+            }
           />
           <Text
             style={[
               s.tabLabel,
-              tab === 'requests' && !selectedBooking && s.tabLabelActive,
+              (transitionTargetTab ?? tab) === 'requests' && (!selectedBooking || isTabTransitioning) &&
+                s.tabLabelActive,
             ]}
           >
             Requests
@@ -914,7 +1419,7 @@ export default function Pro() {
 
         <Pressable
           onPress={() => {
-            setTab('bookings');
+            handleSwitchTab('bookings');
           }}
           style={s.tabButton}
           accessibilityRole="button"
@@ -922,12 +1427,17 @@ export default function Pro() {
           <Icon
             name="calendar"
             size={20}
-            color={tab === 'bookings' || selectedBooking ? colors.brand600 : colors.muted}
+            color={
+              (transitionTargetTab ?? tab) === 'bookings' || (selectedBooking && !isTabTransitioning)
+                ? colors.brand600
+                : colors.muted
+            }
           />
           <Text
             style={[
               s.tabLabel,
-              (tab === 'bookings' || selectedBooking) && s.tabLabelActive,
+              ((transitionTargetTab ?? tab) === 'bookings' || (selectedBooking && !isTabTransitioning)) &&
+                s.tabLabelActive,
             ]}
           >
             Visits
@@ -936,8 +1446,7 @@ export default function Pro() {
 
         <Pressable
           onPress={() => {
-            setSelectedBooking(null);
-            setTab('profile');
+            handleSwitchTab('profile');
           }}
           style={s.tabButton}
           accessibilityRole="button"
@@ -945,18 +1454,84 @@ export default function Pro() {
           <Icon
             name="user"
             size={20}
-            color={tab === 'profile' && !selectedBooking ? colors.brand600 : colors.muted}
+            color={
+              (transitionTargetTab ?? tab) === 'profile' && (!selectedBooking || isTabTransitioning)
+                ? colors.brand600
+                : colors.muted
+            }
           />
           <Text
             style={[
               s.tabLabel,
-              tab === 'profile' && !selectedBooking && s.tabLabelActive,
+              (transitionTargetTab ?? tab) === 'profile' && (!selectedBooking || isTabTransitioning) &&
+                s.tabLabelActive,
             ]}
           >
             Profile
           </Text>
         </Pressable>
       </View>
+
+      {/* White Medical Tab Transition Overlay (<0.5s calming screen) */}
+      {isTabTransitioning && (
+        <Animated.View
+          style={[
+            s.tabTransitionOverlay,
+            { opacity: tabTransitionFade },
+          ]}
+          pointerEvents="auto"
+        >
+          <View style={s.medicalTransitionCard}>
+            {/* Pulsing Medical Heartbeat Ring */}
+            <Animated.View
+              style={[
+                s.pulseIconWrap,
+                { transform: [{ scale: tabPulseAnim }] },
+              ]}
+            >
+              <View style={s.pulseIconInner}>
+                <Icon name="heart" size={24} color="#FFFFFF" strokeWidth={2.4} />
+              </View>
+            </Animated.View>
+
+            {/* Reassuring Medical Title */}
+            <Text style={s.reassureTitle}>{"We are with you, don't worry"}</Text>
+
+            {/* Contextual Healthcare Subtitle */}
+            <Text style={s.reassureSub}>
+              {PRO_TAB_REASSURANCES[transitionTargetTab ?? tab].subtitle}
+            </Text>
+
+            {/* Medical Trust Widgets */}
+            <View style={s.trustRow}>
+              <View style={s.trustBadge}>
+                <Icon name="shieldCheck" size={15} color="#10B981" strokeWidth={2.2} />
+                <Text style={s.trustBadgeText}>Mendyr Partner Network</Text>
+              </View>
+              <View style={s.trustDivider} />
+              <View style={s.trustBadge}>
+                <Icon name="activity" size={15} color="#1262E2" strokeWidth={2.2} />
+                <Text style={s.trustBadgeText}>Clinical Dispatch</Text>
+              </View>
+            </View>
+
+            {/* Smooth Progress Bar */}
+            <View style={s.progressBarTrack}>
+              <Animated.View
+                style={[
+                  s.progressBarFill,
+                  {
+                    width: tabProgressAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: ['0%', '100%'],
+                    }),
+                  },
+                ]}
+              />
+            </View>
+          </View>
+        </Animated.View>
+      )}
     </SafeAreaView>
   );
 }
@@ -983,6 +1558,20 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+  },
+  headerBackBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  headerBackIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: radii.pill,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   headerGreeting: {
     fontSize: 16,
@@ -1652,6 +2241,194 @@ const s = StyleSheet.create({
   loader: {
     marginTop: 32,
   },
+  acceptingToggleCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+    gap: 12,
+  },
+  acceptingToggleTexts: {
+    flex: 1,
+    gap: 4,
+  },
+  acceptingStatusDotRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  statusDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+  },
+  acceptingToggleTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  acceptingToggleDesc: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: colors.muted,
+  },
+  requestsHeaderBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: space.md,
+    paddingTop: 12,
+  },
+  requestsHeaderTexts: {
+    flex: 1,
+    gap: 4,
+  },
+  refreshIconBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  pausedWarningCard: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FCD34D',
+    padding: 14,
+  },
+  pausedWarningRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  pausedWarningTexts: {
+    flex: 1,
+    gap: 2,
+  },
+  pausedWarningTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#92400E',
+  },
+  pausedWarningSub: {
+    fontSize: 12,
+    color: '#B45309',
+    lineHeight: 16,
+  },
+  emptyRequestsCard: {
+    padding: 20,
+    gap: 16,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+  },
+  emptyRequestsHeader: {
+    alignItems: 'center',
+    gap: 8,
+  },
+  emptyClockIconWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: colors.brand50,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  emptyRequestsTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.ink,
+    textAlign: 'center',
+  },
+  emptyRequestsSub: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: colors.muted,
+    textAlign: 'center',
+  },
+  diagnosticList: {
+    backgroundColor: colors.background,
+    borderRadius: 14,
+    padding: 14,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  diagnosticListTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.ink,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  diagnosticItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  diagnosticItemText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 18,
+    color: colors.inkSecondary,
+  },
+  manualRefreshBtn: {
+    alignSelf: 'center',
+    marginTop: 4,
+  },
+  permissionBannerCard: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#BFDBFE',
+    padding: 14,
+  },
+  permissionBannerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  permissionIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#DBEAFE',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  permissionBannerTexts: {
+    flex: 1,
+    gap: 2,
+  },
+  permissionBannerTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#1E40AF',
+  },
+  permissionBannerSub: {
+    fontSize: 11,
+    lineHeight: 16,
+    color: '#3B82F6',
+  },
+  cancelledBannerMini: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+  },
+  cancelledBannerMiniText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#DC2626',
+  },
   bottomTabBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1682,5 +2459,116 @@ const s = StyleSheet.create({
   },
   pressed: {
     opacity: 0.8,
+  },
+  tabTransitionOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 56,
+    backgroundColor: '#FFFFFF',
+    zIndex: 9999,
+    elevation: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: space.lg,
+  },
+  medicalTransitionCard: {
+    width: '100%',
+    maxWidth: 340,
+    backgroundColor: '#FFFFFF',
+    borderRadius: radii.xl,
+    paddingVertical: space.xl,
+    paddingHorizontal: space.lg,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    ...Platform.select({
+      web: {
+        boxShadow: '0 12px 32px rgba(18, 98, 226, 0.08)',
+      },
+      default: {
+        shadowColor: '#1262E2',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.08,
+        shadowRadius: 16,
+        elevation: 4,
+      },
+    }),
+  },
+  pulseIconWrap: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1.5,
+    borderColor: '#BFDBFE',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: space.md,
+  },
+  pulseIconInner: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: '#1262E2',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reassureTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.ink,
+    textAlign: 'center',
+    letterSpacing: -0.3,
+  },
+  reassureSub: {
+    fontSize: 13,
+    fontWeight: '400',
+    color: colors.muted,
+    textAlign: 'center',
+    marginTop: 6,
+    lineHeight: 18,
+    paddingHorizontal: space.xs,
+  },
+  trustRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    marginTop: 18,
+    gap: 10,
+  },
+  trustBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  trustBadgeText: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: colors.ink,
+  },
+  trustDivider: {
+    width: 1,
+    height: 14,
+    backgroundColor: '#E2E8F0',
+  },
+  progressBarTrack: {
+    width: '100%',
+    height: 3,
+    backgroundColor: '#EDF2F7',
+    borderRadius: 1.5,
+    overflow: 'hidden',
+    marginTop: 18,
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: '#1262E2',
+    borderRadius: 1.5,
   },
 });
