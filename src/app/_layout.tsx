@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Stack } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useState } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
@@ -7,6 +8,9 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider } from '@/providers/auth';
 import { colors } from '@/constants/theme';
 import '../global.css';
+
+// Keep native splash screen visible while React Native, auth, and fonts boot up
+SplashScreen.preventAutoHideAsync().catch(() => {});
 
 export default function Layout() {
   const [c] = useState(

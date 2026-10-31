@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Platform, StyleSheet, Text, View } from 'react-native';
@@ -20,6 +21,9 @@ export default function Index() {
 
   /* Enforce minimum 0.25s cold-start splash */
   useEffect(() => {
+    // Hide native splash screen as soon as React component tree mounts
+    SplashScreen.hideAsync().catch(() => {});
+
     const timer = setTimeout(() => {
       setMinSplashDone(true);
     }, COLD_START_DELAY_MS);

@@ -10,6 +10,11 @@
     "icon": "./assets/branding/mendyr.png",
     "scheme": "mendyr",
     "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/branding/mendyr.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#1262E2"
+    },
     "ios": {
       "icon": "./assets/expo.icon"
     },
@@ -17,6 +22,11 @@
       "adaptiveIcon": {
         "backgroundColor": "#EEF5FE",
         "foregroundImage": "./assets/branding/mendyr.png"
+      },
+      "splash": {
+        "backgroundColor": "#1262E2",
+        "image": "./assets/branding/mendyr.png",
+        "resizeMode": "contain"
       },
       "predictiveBackGestureEnabled": false,
       "permissions": [
@@ -31,6 +41,15 @@
     },
     "plugins": [
       "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#1262E2",
+          "image": "./assets/branding/mendyr.png",
+          "imageWidth": 140,
+          "resizeMode": "contain"
+        }
+      ],
       "expo-secure-store",
       [
         "expo-location",
