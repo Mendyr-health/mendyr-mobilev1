@@ -1,31 +1,72 @@
 # Mendyr Mobile
 
-Dedicated Expo/React Native Android client for Mendyr home healthcare. This is an independent Git repository; the Next.js web project remains untouched.
+Expo (SDK 55) / React Native 0.83 client for Mendyr, the home-healthcare marketplace: patients
+book verified nurses, physiotherapists and caregivers for home visits; professionals receive
+requests nearby and run the visit. One app serves both roles.
 
-## Web-app audit
+## Stack
 
-The audited web project is Next.js 16.4 / React 19 / TypeScript / Tailwind 4. It is a two-sided marketplace: patients book home nurses, physiotherapists, caretakers, doctors, lab technicians, and baby-care specialists; professionals configure service area, services and hours, then accept and complete nearby visits.
+- **Expo Router** with route groups, native stack transitions and real bottom tabs
+- **TanStack Query** for server state (cached data first, background refresh, polling that
+  pauses when the app is backgrounded)
+- **Server-driven config** from `GET /api/v1/configs/app` (see below)
+- Inter (body) and Outfit (headings) via `@expo-google-fonts/*`; `expo-haptics` for press and
+  tab feedback; Reanimated for sheets, toasts and press scale
+- Tokens in Expo SecureStore (AsyncStorage on web); single-flight refresh in `src/lib/api.ts`
 
-Patient flow: service catalogue → address → India-time appointment → quote/nearby professionals → booking → status, cancellation and review. Patient account supports profile and address CRUD.
+## Project structure
 
-Professional flow: register → onboarding (profession, area/radius, services, timings) → request feed → accept → call/directions → check-in → complete/release → earnings dashboard. Web polling is 15 seconds for patient updates/requests and 30 seconds for professional bookings.
+```
+src/
+  app/                       Routes only — each file re-exports a screen from src/features
+    _layout.tsx              Providers, font/splash boot, maintenance/update gate, protected groups
+    index.tsx                Redirects to welcome / login / patient home / pro dashboard
+    (auth)/                  welcome (app.onboarding slides), login, register
+    (patient)/(tabs)/        home, bookings, account
+    (patient)/               service/[id], book, booking/[id], addresses, address-form, edit-profile
+    (pro)/(tabs)/            dashboard, requests, visits, earnings, profile
+    (pro)/                   visit/[id], availability, services, onboard (finish profile)
+    notifications.tsx        Inbox (both roles)
+    support.tsx              Help, WhatsApp, call, FAQs, SOS (both roles)
+  features/                  Screens and their data hooks, by feature
+    app/ auth/ home/ catalog/ booking/ addresses/ account/ notifications/ support/ pro/
+  components/                icons, tab bar and the UI kit (components/ui)
+  config/                    Config types, bundled defaults, ConfigProvider + hooks
+  i18n/                      en and hi string tables, I18nProvider
+  theme/                     Design tokens and useTheme/makeStyles
+  lib/                       api client, types, formatting (₹, IST), slots, linking, haptics
+  hooks/                     useNow, useRefresh
+  providers/auth.tsx         Session state, login/register/logout, session-expiry handling
+```
 
-Audited API routes include `/auth/login`, `/auth/register`, `/auth/me`, `/auth/logout`, `/bookings`, `/bookings/quote`, `/bookings/{id}/cancel`, `/bookings/{id}/accept`, `/bookings/{id}/check-in`, `/bookings/{id}/check-out`, `/bookings/{id}/release`, `/reviews`, `/addresses`, `/services`, `/services/categories`, `/professionals/nearby`, `/professionals/onboard`, `/professionals/me`, and availability/services endpoints under `/professionals/me`.
+Route groups are guarded with `Stack.Protected` on the signed-in user's role, so signing in,
+signing out or a session expiring moves the user to the right place automatically.
 
-The web client uses a Next `/api/v1` rewrite and httponly cookies. Login/register responses also contain tokens. This app stores only the access token in Expo SecureStore and sends `Authorization: Bearer …`. **Confirm backend bearer-token/CORS support before release**; no refresh-token behavior has been invented.
+## Config-driven behaviour
 
-Brand tokens were extracted exactly: primary `#1262E2`, light `#63B0F2`, dark `#0F4ABF`, 50 `#EEF5FE`, background `#F7F9FC`. The original logo is reused at `assets/branding/mendyr.png`. The web loads Inter/Outfit via Next; no distributable font files were present, so native currently uses Android system type pending supplied/licensed fonts.
+`ConfigProvider` loads the last cached bundle from AsyncStorage, then fetches
+`/configs/app?role=patient|professional&platform=android|ios|web` in the background and again
+whenever the app returns to the foreground. First paint never waits for it; missing keys fall
+back to the bundled defaults in `src/config/defaults.ts` (identical to the backend registry).
 
-Web-only routing, HTML/Tailwind components, cookie proxy, browser location and desktop chrome were rebuilt as native concerns. No WebView is used.
+| Key | Used for |
+| --- | --- |
+| `app.features` | `useFeature('…')`: reviews, visit PIN, SOS, live status timeline, female-professional preference, Hindi |
+| `app.theme` | Brand colours and card radius (`useTheme`) |
+| `app.home` | Order and visibility of patient home sections |
+| `app.banners` | Home carousel; `deeplink` is an in-app route (`/book`, `/book?service=<id>`, `/service/<id>`, `/support`, `/bookings`) or an https URL |
+| `app.onboarding` | First-launch welcome slides |
+| `app.copy` | Overrides any string key per locale (`en`, `hi`) |
+| `app.support` | Phone, WhatsApp, email, hours, SOS and ambulance numbers, FAQs |
+| `app.version` | Force update below `min_supported`, dismissible prompt below `latest` (compared with the app's `version`) |
+| `app.maintenance` | Full-screen maintenance message with retry |
+| `app.polling` | Refresh intervals (seconds) for live bookings, lists and pro requests |
+| `booking.rules` | Slot picker (hours, step, lead time, horizon) and cancellation fee window |
+| `booking.cancel_reasons` | Reasons in the patient cancel and pro release sheets |
+| `pro.settings` | Radius options, default radius, languages |
 
-## Implemented
-
-- Native login, role registration, secure session restoration/logout.
-- Patient dashboard, service selection, booking submission, saved addresses, booking statuses.
-- Professional dashboard, request polling/acceptance, bookings, profile summary.
-- Centralized typed API client, TanStack Query, brand theme, original logo, touch-sized controls and loading/error/success states.
-
-The following audited workflows are not yet complete: native address editor/location, quote/nearby presentation, booking cancellation/review/details, professional onboarding, profile/services/availability editors, and visit check-in/out/release.
+There is no push channel yet: the notifications inbox is polled at `app.polling.lists` and new
+items (and, for professionals, new requests) show an in-app banner while the app is open.
 
 ## Run
 
@@ -35,9 +76,19 @@ npm install
 npm run android
 ```
 
-The checked-in example uses the deployed backend, `https://mendyr-backend-v1.fastapicloud.dev`. For an Android emulator with a local backend instead, set `EXPO_PUBLIC_API_URL=http://10.0.2.2:8000`. Restart Expo after changing `.env`.
+`EXPO_PUBLIC_API_URL` points at the backend (the API prefix `/api/v1` is added by the client).
+The example uses `https://mendyr-backend-v1.fastapicloud.dev`; for an Android emulator with a
+local backend use `http://10.0.2.2:8000`. Restart Expo after changing `.env`.
 
-Run `npm run typecheck`. Use `npm start` then press `a`, or scan the development-build/Expo Go QR code.
+## Checks
+
+```bash
+npm run typecheck   # tsc --noEmit
+npm run lint        # expo lint
+```
+
+Add dependencies with `npx expo install <pkg>` so versions match the SDK and
+`package-lock.json` stays in sync (CI uses `npm ci`).
 
 ## Android builds
 
@@ -47,16 +98,10 @@ npx eas-cli build --platform android --profile preview
 npx eas-cli build --platform android --profile production
 ```
 
-Development/preview profiles generate APKs; production generates an AAB. Configure Android application ID, signing, and production API URL in EAS before release.
+Development/preview profiles produce APKs; production produces an AAB.
 
-## GitHub Actions APK build
-
-The workflow at `.github/workflows/android-apk.yml` starts an EAS `preview` build on every push to `main` or manually from the Actions tab. It creates an installable APK and the job output includes its Expo download URL.
-
-The workflow embeds `https://mendyr-backend-v1.fastapicloud.dev` as `EXPO_PUBLIC_API_URL` at build time. To point a build at a different public backend, create a GitHub repository variable named `MENDYR_API_URL` under **Settings → Secrets and variables → Actions → Variables**. The backend URL is intentionally a variable rather than a secret: `EXPO_PUBLIC_*` values are included in the installed app and must never contain credentials.
-
-Before the first run, configure EAS once from a trusted local machine: set an Android package name in `app.json`, run `npx eas-cli init`, and make one successful Android EAS build so signing credentials and `extra.eas.projectId` are saved. Then create a GitHub Actions repository secret named `EXPO_TOKEN` containing an Expo access token with permission to build this project. The token is never committed.
-
-## Verification
-
-`npm run typecheck` passes. `expo lint` created an ESLint config then encountered an Expo CLI module-resolution error although ESLint was installed; rerun after resolving the local Expo CLI/toolchain issue. No Android emulator, physical device, production backend, or EAS build was available, so those are not claimed as verified.
+The workflow at `.github/workflows/android-apk.yml` starts an EAS `preview` build on every push
+to `main` (or manually). It embeds `https://mendyr-backend-v1.fastapicloud.dev` as
+`EXPO_PUBLIC_API_URL` unless a repository variable `MENDYR_API_URL` is set. `EXPO_PUBLIC_*`
+values ship inside the app and must never contain secrets. The workflow needs an `EXPO_TOKEN`
+repository secret.
