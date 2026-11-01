@@ -168,6 +168,10 @@ export default function Pro() {
 
   // Dial patient phone
   const handleCallPatient = (phone: string) => {
+    if (selectedBooking?.status === 'cancelled') {
+      Alert.alert('Unavailable', 'Contact details are not available for cancelled visits.');
+      return;
+    }
     if (!phone) {
       Alert.alert('Phone number unavailable', 'No phone number provided for this patient.');
       return;
@@ -576,7 +580,7 @@ export default function Pro() {
 
             {selectedBooking.status === 'cancelled' && (
               <Notice tone="error">
-                The patient cancelled this booking. No visit or travel is required.
+                This booking has been cancelled. No visit or travel is required.
               </Notice>
             )}
 
@@ -593,19 +597,27 @@ export default function Pro() {
                   <Text style={s.patientNameText}>
                     {selectedBooking.patient_name}
                   </Text>
-                  <Text style={s.patientPhoneText}>
-                    {selectedBooking.patient_phone}
-                  </Text>
+                  {selectedBooking.status !== 'cancelled' ? (
+                    <Text style={s.patientPhoneText}>
+                      {selectedBooking.patient_phone}
+                    </Text>
+                  ) : (
+                    <Text style={s.contactHiddenText}>
+                      Contact details hidden (booking cancelled)
+                    </Text>
+                  )}
                 </View>
 
-                {/* Call Button: Opens Dialer */}
-                <Pressable
-                  onPress={() => handleCallPatient(selectedBooking.patient_phone)}
-                  style={({ pressed }) => [s.callActionBtn, pressed && s.pressed]}
-                >
-                  <Icon name="phone" size={16} color="#FFFFFF" strokeWidth={2.4} />
-                  <Text style={s.callActionText}>Call</Text>
-                </Pressable>
+                {/* Call Button: Opens Dialer (active requests only) */}
+                {selectedBooking.status !== 'cancelled' && (
+                  <Pressable
+                    onPress={() => handleCallPatient(selectedBooking.patient_phone)}
+                    style={({ pressed }) => [s.callActionBtn, pressed && s.pressed]}
+                  >
+                    <Icon name="phone" size={16} color="#FFFFFF" strokeWidth={2.4} />
+                    <Text style={s.callActionText}>Call</Text>
+                  </Pressable>
+                )}
               </View>
             </Card>
 
@@ -1759,6 +1771,12 @@ const s = StyleSheet.create({
   patientPhoneText: {
     fontSize: 13,
     color: colors.muted,
+    marginTop: 2,
+  },
+  contactHiddenText: {
+    fontSize: 12,
+    color: colors.muted,
+    fontStyle: 'italic',
     marginTop: 2,
   },
   callActionBtn: {

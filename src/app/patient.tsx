@@ -636,6 +636,10 @@ export default function Patient() {
   }
 
   const handleCall = (phone: string) => {
+    if (bookingDetail.data?.status === 'cancelled') {
+      Alert.alert('Unavailable', 'Contact details are not available for cancelled visits.');
+      return;
+    }
     if (!phone) {
       Alert.alert('Phone unavailable', 'Caregiver contact number not available yet.');
       return;
@@ -842,21 +846,28 @@ export default function Patient() {
                             ★ {bookingDetail.data.professional.average_rating.toFixed(1)} rating
                           </Text>
                         ) : null}
+                        {bookingDetail.data.status === 'cancelled' && (
+                          <Text style={s.contactHiddenText}>
+                            Contact details hidden (booking cancelled)
+                          </Text>
+                        )}
                       </View>
 
-                      {/* Call Caregiver Button */}
-                      <Pressable
-                        onPress={() =>
-                          handleCall(bookingDetail.data?.professional?.phone_number ?? '')
-                        }
-                        style={({ pressed }) => [s.callBtn, pressed && s.pressed]}
-                      >
-                        <Icon name="phone" size={16} color="#FFFFFF" strokeWidth={2.4} />
-                        <Text style={s.callBtnText}>Call</Text>
-                      </Pressable>
+                      {/* Call Caregiver Button (active requests only) */}
+                      {bookingDetail.data.status !== 'cancelled' && (
+                        <Pressable
+                          onPress={() =>
+                            handleCall(bookingDetail.data?.professional?.phone_number ?? '')
+                          }
+                          style={({ pressed }) => [s.callBtn, pressed && s.pressed]}
+                        >
+                          <Icon name="phone" size={16} color="#FFFFFF" strokeWidth={2.4} />
+                          <Text style={s.callBtnText}>Call</Text>
+                        </Pressable>
+                      )}
                     </View>
                   </Card>
-                ) : (
+                ) : bookingDetail.data.status !== 'cancelled' ? (
                   <Card style={s.searchingProCard}>
                     <Icon name="clock" size={24} color={colors.warning} />
                     <View style={s.searchingProTexts}>
@@ -866,7 +877,7 @@ export default function Patient() {
                       </Text>
                     </View>
                   </Card>
-                )}
+                ) : null}
 
                 {/* VISIT ADDRESS & TIME */}
                 <Card style={s.addressDetailCard}>
@@ -2845,6 +2856,12 @@ const s = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: '#EAB308',
+    marginTop: 2,
+  },
+  contactHiddenText: {
+    fontSize: 12,
+    color: colors.muted,
+    fontStyle: 'italic',
     marginTop: 2,
   },
   callBtn: {
