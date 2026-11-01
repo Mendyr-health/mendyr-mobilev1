@@ -1,170 +1,186 @@
-import React from 'react';
-import { View, StyleSheet, type ViewStyle } from 'react-native';
 import {
   Activity,
+  Ambulance,
   ArrowRight,
   Baby,
-  Calendar,
+  BadgeCheck,
+  Ban,
+  Bell,
+  CalendarDays,
   Check,
   CheckCircle2,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  CircleAlert,
+  CircleUser,
+  ClipboardList,
   Clock,
+  Copy,
   FlaskConical,
+  Headset,
   Heart,
+  HeartPulse,
+  Hourglass,
+  House,
   IndianRupee,
   Info,
-  List,
+  Languages,
+  LocateFixed,
+  Lock,
   LogOut,
   Mail,
   MapPin,
+  MessageCircle,
+  Minus,
+  Navigation,
   Pencil,
   Phone,
   Plus,
   RefreshCw,
-  Shield,
   ShieldCheck,
+  Siren,
   Sparkles,
   Star,
   Stethoscope,
   Trash2,
+  TriangleAlert,
   User,
   Users,
+  Venus,
+  Wallet,
+  WifiOff,
+  Wrench,
   X,
   type LucideIcon,
 } from 'lucide-react-native';
+import { StyleSheet, View, type ViewStyle } from 'react-native';
 import type { ProfessionalType } from '@/lib/types';
-import { colors } from '@/constants/theme';
+import { neutral, professionPalette } from '@/theme/tokens';
 
-export type IconName =
-  | 'heart'
-  | 'activity'
-  | 'users'
-  | 'baby'
-  | 'flask'
-  | 'stethoscope'
-  | 'calendar'
-  | 'clock'
-  | 'pin'
-  | 'phone'
-  | 'star'
-  | 'check'
-  | 'checkCircle'
-  | 'x'
-  | 'chevronRight'
-  | 'chevronLeft'
-  | 'arrowRight'
-  | 'plus'
-  | 'user'
-  | 'logout'
-  | 'shield'
-  | 'shieldCheck'
-  | 'sparkles'
-  | 'rupee'
-  | 'info'
-  | 'refresh'
-  | 'list'
-  | 'mail'
-  | 'edit'
-  | 'trash';
-
-const ICON_MAP: Record<IconName, LucideIcon> = {
-  heart: Heart,
+const ICONS = {
   activity: Activity,
-  users: Users,
+  ambulance: Ambulance,
+  arrowRight: ArrowRight,
   baby: Baby,
-  flask: FlaskConical,
-  stethoscope: Stethoscope,
-  calendar: Calendar,
-  clock: Clock,
-  pin: MapPin,
-  phone: Phone,
-  star: Star,
+  verified: BadgeCheck,
+  ban: Ban,
+  bell: Bell,
+  calendar: CalendarDays,
   check: Check,
   checkCircle: CheckCircle2,
-  x: X,
-  chevronRight: ChevronRight,
+  chevronDown: ChevronDown,
   chevronLeft: ChevronLeft,
-  arrowRight: ArrowRight,
-  plus: Plus,
-  user: User,
-  logout: LogOut,
-  shield: Shield,
-  shieldCheck: ShieldCheck,
-  sparkles: Sparkles,
+  chevronRight: ChevronRight,
+  alert: CircleAlert,
+  account: CircleUser,
+  clipboard: ClipboardList,
+  clock: Clock,
+  copy: Copy,
+  flask: FlaskConical,
+  headset: Headset,
+  heart: Heart,
+  heartPulse: HeartPulse,
+  hourglass: Hourglass,
+  home: House,
   rupee: IndianRupee,
   info: Info,
-  refresh: RefreshCw,
-  list: List,
+  languages: Languages,
+  locate: LocateFixed,
+  lock: Lock,
+  logout: LogOut,
   mail: Mail,
+  pin: MapPin,
+  whatsapp: MessageCircle,
+  minus: Minus,
+  navigation: Navigation,
   edit: Pencil,
+  phone: Phone,
+  plus: Plus,
+  refresh: RefreshCw,
+  shieldCheck: ShieldCheck,
+  siren: Siren,
+  sparkles: Sparkles,
+  star: Star,
+  stethoscope: Stethoscope,
   trash: Trash2,
-};
+  warning: TriangleAlert,
+  user: User,
+  users: Users,
+  female: Venus,
+  wallet: Wallet,
+  offline: WifiOff,
+  wrench: Wrench,
+  x: X,
+} satisfies Record<string, LucideIcon>;
 
-interface IconProps {
-  name: IconName;
-  size?: number;
-  color?: string;
-  strokeWidth?: number;
+export type IconName = keyof typeof ICONS;
+
+/** Map config icon names ("shield-check", "map-pin", "home-heart") to our set. */
+export function iconFromConfig(name: string | null | undefined, fallback: IconName = 'heart'): IconName {
+  const map: Record<string, IconName> = {
+    'home-heart': 'home',
+    home: 'home',
+    'shield-check': 'shieldCheck',
+    shield: 'shieldCheck',
+    'map-pin': 'pin',
+    heart: 'heart',
+    star: 'star',
+    clock: 'clock',
+    phone: 'phone',
+    users: 'users',
+    stethoscope: 'stethoscope',
+  };
+  return (name && map[name]) || fallback;
 }
 
 export function Icon({
   name,
   size = 20,
-  color = colors.ink,
+  color = neutral.ink,
   strokeWidth = 2,
-}: IconProps) {
-  const Component = ICON_MAP[name];
-  if (!Component) return null;
-  return <Component size={size} color={color} strokeWidth={strokeWidth} />;
+  fill,
+}: {
+  name: IconName;
+  size?: number;
+  color?: string;
+  strokeWidth?: number;
+  fill?: string;
+}) {
+  const Component = ICONS[name];
+  return <Component size={size} color={color} strokeWidth={strokeWidth} fill={fill ?? 'none'} />;
 }
 
-const PROFESSION_CONFIG: Record<
-  ProfessionalType,
-  { icon: IconName; bg: string; color: string }
-> = {
-  nurse: { icon: 'heart', bg: '#FFF1F2', color: '#E11D48' },
-  physiotherapist: { icon: 'activity', bg: '#F0F9FF', color: '#0284C7' },
-  caretaker: { icon: 'users', bg: '#FFFBEB', color: '#D97706' },
-  baby_care_specialist: { icon: 'baby', bg: '#FDF2F8', color: '#DB2777' },
-  lab_technician: { icon: 'flask', bg: '#F5F3FF', color: '#7C3AED' },
-  doctor: { icon: 'stethoscope', bg: '#ECFDF5', color: '#059669' },
+const PROFESSION_ICON: Record<ProfessionalType, IconName> = {
+  nurse: 'heartPulse',
+  physiotherapist: 'activity',
+  caretaker: 'users',
+  baby_care_specialist: 'baby',
+  lab_technician: 'flask',
+  doctor: 'stethoscope',
 };
 
 export function ProfessionIcon({
   type,
   size = 44,
-  iconSize = 22,
   style,
 }: {
   type: ProfessionalType;
   size?: number;
-  iconSize?: number;
   style?: ViewStyle;
 }) {
-  const cfg = PROFESSION_CONFIG[type] ?? PROFESSION_CONFIG.nurse;
+  const palette = professionPalette[type] ?? professionPalette.nurse;
   return (
     <View
       style={[
-        s.proContainer,
-        {
-          width: size,
-          height: size,
-          borderRadius: Math.round(size * 0.32),
-          backgroundColor: cfg.bg,
-        },
+        s.wrap,
+        { width: size, height: size, borderRadius: Math.round(size * 0.32), backgroundColor: palette.bg },
         style,
       ]}
     >
-      <Icon name={cfg.icon} size={iconSize} color={cfg.color} strokeWidth={2.2} />
+      <Icon name={PROFESSION_ICON[type] ?? 'heartPulse'} size={Math.round(size * 0.5)} color={palette.fg} strokeWidth={2.2} />
     </View>
   );
 }
 
-const s = StyleSheet.create({
-  proContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});
-
+const s = StyleSheet.create({ wrap: { alignItems: 'center', justifyContent: 'center' } });
