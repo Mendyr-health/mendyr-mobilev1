@@ -17,6 +17,7 @@ type ConfigState = {
 
 const Context = createContext<ConfigState | null>(null);
 const cacheKey = (role: ConfigRole) => `mendyr.config.${role}`;
+const CONFIG_REFRESH_MS = 60_000;
 const platform = Platform.OS === 'ios' ? 'ios' : Platform.OS === 'web' ? 'web' : 'android';
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -88,11 +89,30 @@ export function ConfigProvider({ role, children }: { role: ConfigRole; children:
     };
   }, [role, apply, refresh]);
 
+  // Portal changes should reach an app that stays open too: re-check every minute while
+  // foregrounded (the bundle is tiny), and immediately on returning to the app.
   useEffect(() => {
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const start = () => {
+      timer ??= setInterval(refresh, CONFIG_REFRESH_MS);
+    };
+    const stop = () => {
+      if (timer) clearInterval(timer);
+      timer = null;
+    };
+    if (AppState.currentState === 'active') start();
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') refresh();
+      if (state === 'active') {
+        refresh();
+        start();
+      } else {
+        stop();
+      }
     });
-    return () => sub.remove();
+    return () => {
+      stop();
+      sub.remove();
+    };
   }, [refresh]);
 
   const value = useMemo(() => ({ configs, version, hydrated, refresh }), [configs, version, hydrated, refresh]);
