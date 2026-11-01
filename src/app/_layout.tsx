@@ -8,6 +8,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ToastProvider } from '@/components/ui';
 import { ConfigProvider } from '@/config/provider';
 import { useAppFonts } from '@/features/app/fonts';
+import { BrandSplash } from '@/features/app/brand-splash';
 import { AppGate } from '@/features/app/gate';
 import { useOnboardingSeen } from '@/features/app/onboarding-seen';
 import { createQueryClient } from '@/features/app/query-client';
@@ -16,8 +17,10 @@ import { AuthProvider, useAuth } from '@/providers/auth';
 import { neutral } from '@/theme/tokens';
 import '../global.css';
 
-// Keep the native splash up until fonts, the stored session and the intro flag are known.
+// The native splash hands over to <BrandSplash> as soon as React mounts; that stays up until
+// fonts, the stored session and the intro flag are known, and for at least a second.
 SplashScreen.preventAutoHideAsync().catch(() => {});
+const MIN_SPLASH_MS = 1000;
 
 function RootStack() {
   const { user } = useAuth();
@@ -46,13 +49,16 @@ function Boot() {
   const { user, ready } = useAuth();
   const fontsReady = useAppFonts();
   const seen = useOnboardingSeen();
-  const booted = fontsReady && ready && seen !== null;
+  const [minSplashDone, setMinSplashDone] = useState(false);
+  const booted = fontsReady && ready && seen !== null && minSplashDone;
 
   useEffect(() => {
-    if (booted) SplashScreen.hideAsync().catch(() => {});
-  }, [booted]);
+    SplashScreen.hideAsync().catch(() => {});
+    const timer = setTimeout(() => setMinSplashDone(true), MIN_SPLASH_MS);
+    return () => clearTimeout(timer);
+  }, []);
 
-  if (!booted) return null;
+  if (!booted) return <BrandSplash />;
   return (
     <ConfigProvider role={user?.role === 'professional' ? 'professional' : 'patient'}>
       <I18nProvider>
