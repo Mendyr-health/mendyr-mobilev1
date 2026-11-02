@@ -5,6 +5,8 @@ import { Avatar, Badge, Button, Card, Chip, ErrorState, ListRow, Screen, Sheet, 
 import { useConfig } from '@/config/provider';
 import { PROFESSIONS } from '@/constants/professions';
 import { LanguageSheet, languageName } from '@/features/account/language-sheet';
+import { useProDocuments } from '@/features/documents/api';
+import { documentGaps } from '@/features/documents/labels';
 import { useUnreadCount } from '@/features/notifications/api';
 import { useI18n } from '@/i18n';
 import { displayPhone } from '@/lib/format';
@@ -20,6 +22,8 @@ export function ProfileScreen() {
   const profile = useProProfile();
   const update = useUpdateProfile();
   const unread = useUnreadCount();
+  const documents = useProDocuments();
+  const docGaps = documentGaps([...new Set(settings.required_documents)], documents.data);
   const [langOpen, setLangOpen] = useState(false);
   const [spokenOpen, setSpokenOpen] = useState(false);
   const [spoken, setSpoken] = useState<string[]>([]);
@@ -38,7 +42,7 @@ export function ProfileScreen() {
     ]);
 
   return (
-    <Screen safeTop onRefresh={() => profile.refetch()}>
+    <Screen safeTop onRefresh={() => Promise.all([profile.refetch(), documents.refetch()])}>
       <Text variant="h1" accessibilityRole="header">
         {t('tabs.profile')}
       </Text>
@@ -98,6 +102,13 @@ export function ProfileScreen() {
                 setSpoken(p.languages_spoken ?? []);
                 setSpokenOpen(true);
               }}
+            />
+            <ListRow
+              icon="file"
+              title={t('docs.title')}
+              subtitle={documents.data ? t('docs.pro.progress', { done: docGaps.uploaded, total: docGaps.total }) : t('docs.pro.rowBody')}
+              value={documents.data && (docGaps.missing || docGaps.rejected) ? String(docGaps.missing + docGaps.rejected) : undefined}
+              onPress={() => router.push('/documents')}
             />
             <ListRow icon="clock" title={t('pro.availability')} subtitle={t('pro.availabilityBody')} onPress={() => router.push('/availability')} />
             <ListRow icon="stethoscope" title={t('pro.services')} subtitle={t('pro.servicesBody')} onPress={() => router.push('/services')} />

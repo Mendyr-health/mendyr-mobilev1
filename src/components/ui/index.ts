@@ -3,6 +3,7 @@ export { Badge, useTone, type Tone } from './badge';
 export { Button, type ButtonVariant } from './button';
 export { Card } from './card';
 export { Chip } from './chip';
+export { ConfirmSheet } from './confirm-sheet';
 export { Field } from './field';
 export { ListRow } from './list-row';
 export { PressableScale } from './pressable-scale';

@@ -23,13 +23,16 @@ src/
     index.tsx                Redirects to welcome / login / patient home / pro dashboard
     (auth)/                  welcome (app.onboarding slides), login, register
     (patient)/(tabs)/        home, bookings, account
-    (patient)/               service/[id], book, booking/[id], addresses, address-form, edit-profile
+    (patient)/               service/[id], book, booking/[id], addresses, address-form, edit-profile,
+                             my-documents
     (pro)/(tabs)/            dashboard, requests, visits, earnings, profile
-    (pro)/                   visit/[id], availability, services, onboard (finish profile)
+    (pro)/                   visit/[id], availability, services, documents (KYC), onboard (finish profile)
     notifications.tsx        Inbox (both roles)
     support.tsx              Help, WhatsApp, call, FAQs, SOS (both roles)
   features/                  Screens and their data hooks, by feature
     app/ auth/ home/ catalog/ booking/ addresses/ account/ notifications/ support/ pro/
+    documents/               Upload helper (pick → upload-url → PUT → record), viewer, KYC and
+                             patient document screens
   components/                icons, tab bar and the UI kit (components/ui)
   config/                    Config types, bundled defaults, ConfigProvider + hooks
   i18n/                      en and hi string tables, I18nProvider
@@ -51,7 +54,7 @@ back to the bundled defaults in `src/config/defaults.ts` (identical to the backe
 
 | Key | Used for |
 | --- | --- |
-| `app.features` | `useFeature('…')`: reviews, visit PIN, SOS, live status timeline, female-professional preference, Hindi |
+| `app.features` | `useFeature('…')`: reviews, visit PIN, SOS, live status timeline, female-professional preference, Hindi, patient documents (`prescription_upload`) |
 | `app.theme` | Brand colours and card radius (`useTheme`) |
 | `app.home` | Order and visibility of patient home sections |
 | `app.banners` | Home carousel; `deeplink` is an in-app route (`/book`, `/book?service=<id>`, `/service/<id>`, `/support`, `/bookings`) or an https URL |
@@ -63,10 +66,20 @@ back to the bundled defaults in `src/config/defaults.ts` (identical to the backe
 | `app.polling` | Refresh intervals (seconds) for live bookings, lists and pro requests |
 | `booking.rules` | Slot picker (hours, step, lead time, horizon) and cancellation fee window |
 | `booking.cancel_reasons` | Reasons in the patient cancel and pro release sheets |
-| `pro.settings` | Radius options, default radius, languages |
+| `pro.settings` | Radius options, default radius, languages, required KYC documents |
 
 There is no push channel yet: the notifications inbox is polled at `app.polling.lists` and new
 items (and, for professionals, new requests) show an in-app banner while the app is open.
+
+## Documents
+
+Files go straight to private storage: `features/documents/upload.ts` picks a file (camera,
+photo library or PDF), shrinks large photos (~2000px long edge, JPEG 0.8), asks the API for a
+presigned `upload-url`, `PUT`s the bytes with exactly the returned headers, then records the
+`file_key`. `view_url`s last ~5 minutes, so document lists are always refetched and a link
+older than a few minutes is refreshed before it opens (photos in an in-app viewer, PDFs in the
+in-app browser). Professionals manage KYC documents from Profile and the dashboard; the patient
+side (My documents, attaching to bookings) is behind `app.features.prescription_upload`.
 
 ## Run
 

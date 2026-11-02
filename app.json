@@ -56,6 +56,14 @@
         {
           "locationWhenInUsePermission": "Allow Mendyr to use your location to find care near you."
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Mendyr to access your photos so you can upload prescriptions, reports and verification documents.",
+          "cameraPermission": "Allow Mendyr to use your camera so you can photograph prescriptions, reports and verification documents.",
+          "microphonePermission": false
+        }
       ]
     ],
     "experiments": {

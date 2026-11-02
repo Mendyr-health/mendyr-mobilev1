@@ -6,6 +6,9 @@ import { isActive } from '@/features/booking/status';
 import { BellButton } from '@/features/notifications/bell-button';
 import { useInbox } from '@/features/notifications/api';
 import { useRefresh } from '@/hooks/use-refresh';
+import { useConfig } from '@/config/provider';
+import { useProDocuments } from '@/features/documents/api';
+import { documentGaps } from '@/features/documents/labels';
 import { useT } from '@/i18n';
 import { firstName, inr, istDateKey } from '@/lib/format';
 import { useAuth } from '@/providers/auth';
@@ -25,7 +28,11 @@ export function DashboardScreen() {
   const ready = p?.verification_status === 'approved' && p.is_accepting_bookings;
   const requests = useRequests(!!ready);
   const visits = useProBookings();
-  const refresh = useRefresh(profile, visits, useInbox());
+  const documents = useProDocuments();
+  const requiredDocs = useConfig('pro.settings').required_documents;
+  const refresh = useRefresh(profile, visits, documents, useInbox());
+  // Only nudge once the document list has loaded, so it never flashes a false "missing".
+  const docGaps = documents.data ? documentGaps([...new Set(requiredDocs)], documents.data) : undefined;
 
   const todayKey = istDateKey(new Date());
   const today = (visits.data ?? [])
@@ -53,7 +60,7 @@ export function DashboardScreen() {
         <ErrorState error={profile.error} onRetry={() => profile.refetch()} />
       ) : (
         <>
-          <VerificationCard profile={p!} compact />
+          <VerificationCard profile={p!} compact documents={docGaps} />
           {p!.verification_status === 'approved' ? <OnlineToggle profile={p!} /> : null}
         </>
       )}
