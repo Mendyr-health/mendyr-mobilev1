@@ -4,6 +4,9 @@ import { StyleSheet, View } from 'react-native';
 import { Icon, type IconName } from '@/components/icons';
 import { Badge, Button, Card, ErrorState, Header, Screen, SkeletonList, Text, useToast } from '@/components/ui';
 import { statusLabelKey, statusTone } from '@/features/booking/status';
+import { DocumentRow } from '@/features/documents/document-row';
+import { useDocumentViewer } from '@/features/documents/document-viewer';
+import { medicalIcon, medicalSubtitle, medicalTitle } from '@/features/documents/labels';
 import { useT } from '@/i18n';
 import { ApiError } from '@/lib/api';
 import { displayPhone, inr, when } from '@/lib/format';
@@ -29,6 +32,7 @@ export function VisitDetailScreen() {
   const release = useRelease();
   const [sheet, setSheet] = useState<SheetName>(null);
   const [pinError, setPinError] = useState<string | null>(null);
+  const { open, opening, viewer } = useDocumentViewer();
   const v = visit.data;
 
   const header = <Header title={v?.booking_code ?? t('visit.title')} />;
@@ -141,6 +145,28 @@ export function VisitDetailScreen() {
           </Text>
         </Card>
       ) : null}
+      {v.documents?.length ? (
+        <Card style={s.block}>
+          <View>
+            <Text variant="h3">{t('visit.documents')}</Text>
+            <Text variant="caption" color="subtle">
+              {t('visit.documentsNote')}
+            </Text>
+          </View>
+          {v.documents.map((doc) => (
+            <DocumentRow
+              key={doc.id}
+              icon={medicalIcon(doc.document_type)}
+              title={medicalTitle(doc, t)}
+              subtitle={medicalSubtitle(doc, t)}
+              opening={opening === doc.id}
+              onPress={() =>
+                open(doc, { updatedAt: visit.dataUpdatedAt, refetch: async () => (await visit.refetch()).data?.documents })
+              }
+            />
+          ))}
+        </Card>
+      ) : null}
       {v.status === 'cancelled' && v.cancellation_reason ? (
         <Card style={s.block}>
           <Text variant="h3">{t('visit.cancelledTitle')}</Text>
@@ -157,6 +183,7 @@ export function VisitDetailScreen() {
         </Card>
       ) : null}
 
+      {viewer}
       <PinSheet visible={sheet === 'pin'} onClose={() => setSheet(null)} busy={checkIn.isPending} error={pinError} onSubmit={(pin) => start(pin)} />
       <CompleteSheet
         visible={sheet === 'complete'}

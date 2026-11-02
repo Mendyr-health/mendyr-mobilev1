@@ -44,7 +44,12 @@ export function RequestCard({ request: r, onAccept, busy }: { request: BookingRe
           {t('requests.distance', { km: r.distance_km.toFixed(1) })}
         </Text>
       </View>
-      {r.preferred_gender === 'female' ? <Badge label={t('requests.femalePreferred')} tone="accent" icon="female" /> : null}
+      {r.preferred_gender === 'female' || r.has_documents ? (
+        <View style={s.tags}>
+          {r.preferred_gender === 'female' ? <Badge label={t('requests.femalePreferred')} tone="accent" icon="female" /> : null}
+          {r.has_documents ? <Badge label={t('requests.hasDocuments')} tone="primary" icon="paperclip" /> : null}
+        </View>
+      ) : null}
       {r.patient_notes ? (
         <Text variant="caption" color="muted" numberOfLines={2}>
           “{r.patient_notes}”
@@ -61,4 +66,5 @@ const s = StyleSheet.create({
   head: { flexDirection: 'row', gap: 12, alignItems: 'flex-start' },
   earning: { alignItems: 'flex-end' },
   line: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  tags: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
 });
