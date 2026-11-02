@@ -15,6 +15,7 @@ export function ReviewStep({
   time,
   female,
   notes,
+  documentCount = 0,
 }: {
   service: Service;
   address: Address;
@@ -22,6 +23,7 @@ export function ReviewStep({
   time: string;
   female: boolean;
   notes: string;
+  documentCount?: number;
 }) {
   const t = useT();
   const quote = useQuote(service.id, address.id);
@@ -34,6 +36,9 @@ export function ReviewStep({
         {address.contact_name ? <Line icon="user" label={t('address.forContact', { name: address.contact_name })} /> : null}
         {female ? <Line icon="female" label={t('booking.femalePreferred')} /> : null}
         {notes.trim() ? <Line icon="edit" label={notes.trim()} /> : null}
+        {documentCount > 0 ? (
+          <Line icon="paperclip" label={documentCount === 1 ? t('book.docs.reviewOne') : t('book.docs.reviewMany', { count: documentCount })} />
+        ) : null}
       </Card>
       <Card>
         {quote.isPending ? (

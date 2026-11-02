@@ -13,6 +13,7 @@ import { useBooking, useCancelBooking, useSubmitReview } from '../api';
 import { PriceBreakdown } from '../price-breakdown';
 import { isActive, statusHeadlineKey, statusIcon, statusLabelKey, statusTone } from '../status';
 import { CancelSheet } from './cancel-sheet';
+import { BookingDocumentsCard } from './documents-card';
 import { PinCard } from './pin-card';
 import { ProfessionalCard } from './professional-card';
 import { RatingSheet } from './rating-sheet';
@@ -49,6 +50,7 @@ export function BookingDetailScreen() {
   const review = useSubmitReview(id);
   const liveStatus = useFeature('live_status');
   const reviews = useFeature('reviews');
+  const documentsOn = useFeature('prescription_upload');
   const [cancelOpen, setCancelOpen] = useState(false);
   const [rateOpen, setRateOpen] = useState(false);
   const b = booking.data;
@@ -123,6 +125,9 @@ export function BookingDetailScreen() {
           <Detail icon="ban" label={t('booking.cancelReason')} value={b.cancellation_reason} />
         ) : null}
       </Card>
+      {documentsOn ? (
+        <BookingDocumentsCard booking={b} updatedAt={booking.dataUpdatedAt} refetch={async () => (await booking.refetch()).data} />
+      ) : null}
       {b.visit_summary_notes || b.vitals_recorded ? (
         <Card style={s.details}>
           <Text variant="h3">{t('booking.summary')}</Text>

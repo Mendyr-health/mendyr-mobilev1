@@ -5,27 +5,32 @@ import { Button, Header, Screen, Text, useToast } from '@/components/ui';
 import { useFeature } from '@/config/provider';
 import { defaultAddress, useAddresses } from '@/features/addresses/api';
 import { useServices } from '@/features/catalog/api';
+import { useMedicalDocuments } from '@/features/documents/api';
 import { useT, type CopyKey } from '@/i18n';
+import { ApiError } from '@/lib/api';
 import { istIso, slotLabel } from '@/lib/format';
 import { error as hapticError, success } from '@/lib/haptics';
 import { useTheme } from '@/theme';
 import { useCreateBooking } from '../api';
 import { AddressStep } from './address-step';
 import { DetailsStep } from './details-step';
+import { DocumentsStep } from './documents-step';
 import { ReviewStep } from './review-step';
 import { ServiceStep } from './service-step';
 import { WhenStep } from './when-step';
 
-type Step = 'service' | 'when' | 'address' | 'details' | 'review';
+type Step = 'service' | 'when' | 'address' | 'details' | 'documents' | 'review';
 const TITLES: Record<Step, CopyKey> = {
   service: 'book.step.service',
   when: 'book.step.when',
   address: 'book.step.address',
   details: 'book.step.details',
+  documents: 'book.step.documents',
   review: 'book.step.review',
 };
 
-/** Stepped booking: (service) → date & time → address → preferences → review & confirm. */
+/** Stepped booking: (service) → date & time → address → preferences → (prescription &
+ * reports, when `prescription_upload` is on) → review & confirm. */
 export function BookFlowScreen() {
   const params = useLocalSearchParams<{ service?: string }>();
   const t = useT();
@@ -34,9 +39,18 @@ export function BookFlowScreen() {
   const services = useServices();
   const addresses = useAddresses();
   const genderPreference = useFeature('gender_preference');
+  const documentsOn = useFeature('prescription_upload');
+  const medicalDocs = useMedicalDocuments(documentsOn);
   const create = useCreateBooking();
 
-  const steps: Step[] = [...(params.service ? [] : (['service'] as Step[])), 'when', 'address', 'details', 'review'];
+  const steps: Step[] = [
+    ...(params.service ? [] : (['service'] as Step[])),
+    'when',
+    'address',
+    'details',
+    ...(documentsOn ? (['documents'] as Step[]) : []),
+    'review',
+  ];
   const [index, setIndex] = useState(0);
   const [serviceId, setServiceId] = useState<string | null>(params.service ?? null);
   const [dateKey, setDateKey] = useState<string | null>(null);
@@ -44,11 +58,16 @@ export function BookFlowScreen() {
   const [addressId, setAddressId] = useState<string | null>(null);
   const [female, setFemale] = useState(false);
   const [notes, setNotes] = useState('');
+  const [documentIds, setDocumentIds] = useState<string[]>([]);
 
   const step = steps[index];
   const service = services.data?.find((s) => s.id === serviceId);
   // Keep the chosen address valid as the list changes (e.g. after adding one).
   const address = addresses.data?.find((a) => a.id === addressId) ?? defaultAddress(addresses.data);
+  // Only documents that still exist (one may have been deleted elsewhere).
+  const attached = documentsOn ? (medicalDocs.data ?? []).filter((d) => documentIds.includes(d.id)) : [];
+  const prescriptionRequired = documentsOn && !!service?.requires_prescription;
+  const hasPrescription = attached.some((d) => d.document_type === 'prescription');
 
   const back = useCallback(() => {
     if (index > 0) setIndex(index - 1);
@@ -64,7 +83,15 @@ export function BookFlowScreen() {
   );
 
   const canContinue =
-    step === 'service' ? !!serviceId : step === 'when' ? !!dateKey && !!time : step === 'address' ? !!address : true;
+    step === 'service'
+      ? !!serviceId
+      : step === 'when'
+        ? !!dateKey && !!time
+        : step === 'address'
+          ? !!address
+          : step === 'documents'
+            ? !prescriptionRequired || hasPrescription
+            : true;
 
   function submit() {
     if (!service || !address || !dateKey || !time) return;
@@ -75,6 +102,7 @@ export function BookFlowScreen() {
         scheduled_start_at: istIso(dateKey, time),
         patient_notes: notes.trim() || null,
         ...(genderPreference ? { preferred_gender: female ? 'female' : null } : {}),
+        ...(attached.length ? { document_ids: attached.map((d) => d.id) } : {}),
       },
       {
         onSuccess: (booking) => {
@@ -84,6 +112,12 @@ export function BookFlowScreen() {
         },
         onError: (e) => {
           hapticError();
+          if (e instanceof ApiError && e.code === 'prescription_required') {
+            toast.show(t('book.docs.prescriptionRequired'), 'error');
+            const at = steps.indexOf('documents');
+            if (at >= 0) setIndex(at);
+            return;
+          }
           toast.show(e.message, 'error');
         },
       },
@@ -92,13 +126,24 @@ export function BookFlowScreen() {
 
   const footer = (
     <View style={s.footer}>
+      {step === 'documents' && prescriptionRequired && !hasPrescription ? (
+        <Text variant="caption" color="muted" align="center">
+          {t('book.docs.requiredShort')}
+        </Text>
+      ) : null}
       {step === 'when' && dateKey && time ? (
         <Text variant="caption" color="muted" align="center">
           {t('book.selectedSlot', { time: slotLabel(time) })}
         </Text>
       ) : null}
       {step === 'review' ? (
-        <Button title={t('book.confirm')} size="lg" loading={create.isPending} disabled={!service || !address} onPress={submit} />
+        <Button
+          title={t('book.confirm')}
+          size="lg"
+          loading={create.isPending}
+          disabled={!service || !address || (prescriptionRequired && !hasPrescription)}
+          onPress={submit}
+        />
       ) : (
         <Button title={t('common.continue')} size="lg" disabled={!canContinue} onPress={() => setIndex(index + 1)} icon="arrowRight" iconRight />
       )}
@@ -139,8 +184,19 @@ export function BookFlowScreen() {
       ) : null}
       {step === 'address' ? <AddressStep selected={address?.id ?? null} onSelect={setAddressId} /> : null}
       {step === 'details' ? <DetailsStep female={female} onFemale={setFemale} notes={notes} onNotes={setNotes} /> : null}
+      {step === 'documents' && service ? (
+        <DocumentsStep selected={documentIds} onChange={setDocumentIds} required={prescriptionRequired} serviceName={service.name} />
+      ) : null}
       {step === 'review' && service && address && dateKey && time ? (
-        <ReviewStep service={service} address={address} dateKey={dateKey} time={time} female={female} notes={notes} />
+        <ReviewStep
+          service={service}
+          address={address}
+          dateKey={dateKey}
+          time={time}
+          female={female}
+          notes={notes}
+          documentCount={attached.length}
+        />
       ) : null}
     </Screen>
   );

@@ -17,6 +17,7 @@ export function AccountScreen() {
   const { user, logout } = useAuth();
   const support = useConfig('app.support');
   const sos = useFeature('sos');
+  const documents = useFeature('prescription_upload');
   const addresses = useAddresses();
   const unread = useUnreadCount();
   const [langOpen, setLangOpen] = useState(false);
@@ -53,6 +54,7 @@ export function AccountScreen() {
       </Card>
       <Card padded={false} style={s.group}>
         <ListRow icon="pin" title={t('address.title')} subtitle={t('account.addressesCount', { count: addresses.data?.length ?? 0 })} onPress={() => router.push('/addresses')} />
+        {documents ? <ListRow icon="folder" title={t('docs.my.title')} subtitle={t('docs.my.subtitle')} onPress={() => router.push('/my-documents')} /> : null}
         <ListRow icon="bell" title={t('notifications.title')} value={unread ? String(unread) : undefined} onPress={() => router.push('/notifications')} />
         {canSwitch ? <ListRow icon="languages" title={t('account.language')} value={languageName(lang)} onPress={() => setLangOpen(true)} /> : null}
       </Card>

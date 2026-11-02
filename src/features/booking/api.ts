@@ -45,6 +45,8 @@ export type CreateBookingInput = {
   scheduled_start_at: string;
   patient_notes: string | null;
   preferred_gender?: 'female' | null;
+  /** The patient's own medical documents to share with the professional. */
+  document_ids?: string[];
 };
 
 export function useCreateBooking() {
